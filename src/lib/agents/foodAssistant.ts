@@ -2,77 +2,32 @@ import type { DietType, MealSlot } from "@prisma/client";
 import { prisma } from "../db";
 import { dbRecipeToDetail } from "../recipeDetail";
 import type { RecipeDetail } from "@/components/RecipeDetailModal";
-import { getLLMProvider, type ContentBlock, type LLMMessage, type TextBlock, type ToolDefinition } from "./llmProvider";
+import { getLLMProvider, type LLMMessage } from "./llmProvider";
+import { extractAssistantQuery } from "./queryExtraction";
+import { assistantIntentSchema, type AssistantIntent, type AssistantQuery } from "./assistantQuery";
 import { searchRecipes, type NutritionQuery, type SearchableRecipe } from "./recipeSearch";
-import { decideForMe } from "./decideForMe";
+import { getDecisionEngine } from "./decisionEngine";
 import { macroRescue } from "./macroRescue";
 import { transformRecipe } from "./recipeTransformer";
+import { getOrGenerateDayPlan } from "../generateMealPlan";
 
-const SYSTEM_PROMPT = `Du bist der Ernährungscoach in einer persönlichen Ernährungs-App. Du hilfst \
+/**
+ * System-Prompt nur noch für die freie Text-Antwort (ANSWER_QUESTION/OTHER).
+ * Strukturierte Aufgaben (Suche, Entscheidung, Transform, Rescue, Plan)
+ * laufen über extractAssistantQuery() + deterministische Domain-Funktionen,
+ * nicht mehr über ein vom LLM frei gewähltes Tool-Menü.
+ */
+const ANSWER_SYSTEM_PROMPT = `Du bist der Ernährungscoach in einer persönlichen Ernährungs-App. Du hilfst \
 dem Nutzer, ohne dass er selbst suchen oder rechnen muss.
 
 Regeln:
-- Erfinde NIEMALS Nährwerte oder Rezepte. Rezeptvorschläge kommen ausschließlich aus deinen \
-Tools, die greifen auf die echte, geprüfte Rezeptdatenbank des Nutzers zu.
-- Nutze search_recipes, wenn der Nutzer Zutaten, Zeit, Makro-Wünsche oder Rezeptideen nennt.
-- Nutze decide_for_me, wenn der Nutzer sagt "entscheide für mich" o.ä. Es wählt automatisch \
-eine konkrete, zeitlich passende Mahlzeit aus seinem heutigen Plan.
-- Nutze macro_rescue bei Fragen wie "was passt noch in meine Makros" / "rette meine Makros".
-- Nutze transform_recipe, wenn der Nutzer ein zuvor genanntes Rezept verändert haben möchte \
-(proteinreicher, vegan, kleinere Portion, ...).
-- Fasse Tool-Ergebnisse kurz zusammen. Die App zeigt die Rezeptkarten selbst an, wiederhole \
-nicht jedes Detail in Textform.
+- Erfinde NIEMALS Nährwerte oder Rezepte. Du beantwortest hier nur eine allgemeine Frage, keine \
+konkrete Rezept- oder Mahlzeitenempfehlung. Für Rezeptvorschläge verweist du darauf, dass der Nutzer \
+danach fragen kann (z.B. "Was soll ich heute essen?"), das läuft über die echte Rezeptdatenbank.
 - Antworte auf Deutsch, direkt und knapp, ohne Floskeln.
 - Verwende niemals Gedankenstriche (—) in deinen Antworten. Nutze stattdessen Punkte, Kommas \
 oder Doppelpunkte.
 - Bei Themen ohne Bezug zu Ernährung/Rezepten: freundlich ablehnen und zurücklenken.`;
-
-const TOOLS: ToolDefinition[] = [
-  {
-    name: "search_recipes",
-    description:
-      "Durchsucht die Rezeptdatenbank des Nutzers anhand strukturierter Kriterien (Kalorien-/Makro-Ziel, verfügbare/ausgeschlossene Zutaten, Diätform, max. Zubereitungszeit, Mahlzeit-Typ).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        calorieTarget: { type: "number" },
-        proteinTarget: { type: "number" },
-        carbTarget: { type: "number" },
-        fatTarget: { type: "number" },
-        availableIngredients: { type: "array", items: { type: "string" } },
-        excludedIngredients: { type: "array", items: { type: "string" } },
-        dietaryPreferences: { type: "array", items: { type: "string" } },
-        maxPreparationTimeMin: { type: "number" },
-        mealType: { type: "string", description: "z.B. Frühstück, Mittag, Abend, Snack" },
-      },
-    },
-  },
-  {
-    name: "decide_for_me",
-    description:
-      "Wählt automatisch EINE konkrete, zeitlich passende Mahlzeit aus dem heutigen Plan des Nutzers, die er noch nicht gegessen hat.",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "macro_rescue",
-    description:
-      "Berechnet, wie viele Kalorien/Makros dem Nutzer heute noch zum Tagesziel fehlen, und schlägt passende Rezepte vor, um die Lücke zu schließen.",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "transform_recipe",
-    description:
-      "Schreibt ein bestehendes Rezept anhand einer Anweisung um (proteinreicher, vegan, kleinere Portion, weniger Zutaten, ...).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        recipeName: { type: "string", description: "Name des zuvor genannten oder vorgeschlagenen Rezepts" },
-        instruction: { type: "string", description: "Die gewünschte Änderung, in eigenen Worten" },
-      },
-      required: ["recipeName", "instruction"],
-    },
-  },
-];
 
 type RecipeRow = Awaited<ReturnType<typeof prisma.recipe.findMany>>[number];
 
@@ -96,84 +51,135 @@ function toSearchable(r: RecipeRow): SearchableRecipe {
   };
 }
 
-interface ToolExecutionResult {
-  resultText: string;
-  recipes: RecipeDetail[];
+/** Bildet die Teilmenge von AssistantQuery ab, die recipeSearch.ts tatsächlich auswertet. */
+export function toNutritionQuery(query: AssistantQuery, extra?: Partial<NutritionQuery>): NutritionQuery {
+  return {
+    calorieTarget: query.calories,
+    proteinTarget: query.protein,
+    carbTarget: query.carbs,
+    fatTarget: query.fat,
+    availableIngredients: query.ingredients,
+    excludedIngredients: query.excludedIngredients,
+    dietaryPreferences: [
+      ...(query.dietaryStyle ? [query.dietaryStyle] : []),
+      ...(query.preferences ?? []),
+      ...(query.cuisine ? [query.cuisine] : []),
+    ],
+    allergies: query.allergies,
+    maxPreparationTimeMin: query.maxCookingTimeMin,
+    mealType: query.mealType,
+    ...extra,
+  };
 }
 
-async function runSearchRecipes(profileId: string, query: NutritionQuery): Promise<ToolExecutionResult> {
+export type AssistantActionType = "SHOW_RECIPES" | "SHOW_DECISION" | "SHOW_MEAL_PLAN" | "ASK_CLARIFICATION" | "NONE";
+
+export interface AssistantAction {
+  type: AssistantActionType;
+}
+
+interface TaskResult {
+  resultText: string;
+  recipes: RecipeDetail[];
+  action: AssistantAction;
+}
+
+async function loadOwnAndSharedRecipes(profileId: string) {
+  return prisma.recipe.findMany({ where: { OR: [{ isCustom: false }, { ownerProfileId: profileId }] } });
+}
+
+async function runSearchRecipesTask(profileId: string, query: AssistantQuery): Promise<TaskResult> {
   const profile = await prisma.profile.findUniqueOrThrow({
     where: { id: profileId },
     include: { allergies: true, dislikedFoods: true },
   });
-  const dbRecipes = await prisma.recipe.findMany({
-    where: { OR: [{ isCustom: false }, { ownerProfileId: profileId }] },
-  });
+  const dbRecipes = await loadOwnAndSharedRecipes(profileId);
   const dbById = new Map(dbRecipes.map((r) => [r.id, r]));
 
-  const merged: NutritionQuery = {
-    ...query,
+  const nutritionQuery = toNutritionQuery(query, {
     allergies: [...(query.allergies ?? []), ...profile.allergies.map((a) => a.label)],
-    excludedIngredients: [
-      ...(query.excludedIngredients ?? []),
-      ...profile.dislikedFoods.map((d) => d.label),
-    ],
-  };
+    excludedIngredients: [...(query.excludedIngredients ?? []), ...profile.dislikedFoods.map((d) => d.label)],
+  });
 
-  const matches = searchRecipes(merged, dbRecipes.map(toSearchable), 5);
+  const matches = searchRecipes(nutritionQuery, dbRecipes.map(toSearchable), 5);
   const recipes = matches.map((m) => dbRecipeToDetail(dbById.get(m.recipe.id)!));
 
   const resultText =
     recipes.length === 0
-      ? "Keine passenden Rezepte gefunden."
+      ? "Keine passenden Rezepte gefunden. Magst du es mit anderen Kriterien nochmal versuchen?"
       : `Gefunden: ${recipes.map((r) => `${r.name} (${r.kcal} kcal, ${r.proteinG}g Protein)`).join("; ")}.`;
 
-  return { resultText, recipes };
+  return { resultText, recipes, action: { type: "SHOW_RECIPES" } };
 }
 
-async function runDecideForMe(profileId: string): Promise<ToolExecutionResult> {
-  const decision = await decideForMe(profileId);
+async function runUsePantryTask(profileId: string, query: AssistantQuery): Promise<TaskResult> {
+  if (!query.ingredients || query.ingredients.length === 0) {
+    return {
+      resultText: "Welche Zutaten hast du denn da? Nenn mir ein paar, dann schlage ich passende Rezepte vor.",
+      recipes: [],
+      action: { type: "ASK_CLARIFICATION" },
+    };
+  }
+  const result = await runSearchRecipesTask(profileId, query);
+  const prefix =
+    result.recipes.length === 0
+      ? ""
+      : `Aus ${query.ingredients.join(", ")}${query.pantryOnly ? " (nur damit)" : ""} geht zum Beispiel: `;
+  return { ...result, resultText: prefix ? `${prefix}${result.resultText.replace(/^Gefunden: /, "")}` : result.resultText };
+}
+
+async function runDecideMealTask(profileId: string, query: AssistantQuery): Promise<TaskResult> {
+  const decision = await getDecisionEngine().decide({ profileId, query });
   if (!decision) {
-    return { resultText: "Heute ist bereits alles aus dem Plan geloggt, nichts mehr zu entscheiden.", recipes: [] };
+    return {
+      resultText: "Heute ist bereits alles aus deinem Plan geloggt, nichts mehr zu entscheiden.",
+      recipes: [],
+      action: { type: "NONE" },
+    };
   }
   const dbRecipe = await prisma.recipe.findUniqueOrThrow({ where: { id: decision.recipeId } });
   const recipe = dbRecipeToDetail(dbRecipe, decision.portionMultiplier);
   return {
     resultText: `${decision.reason} Vorschlag: ${recipe.name} um ${decision.time} Uhr (${recipe.kcal} kcal, ${recipe.proteinG}g Protein).`,
     recipes: [recipe],
+    action: { type: "SHOW_DECISION" },
   };
 }
 
-async function runMacroRescue(profileId: string): Promise<ToolExecutionResult> {
+async function runMacroRescueTask(profileId: string): Promise<TaskResult> {
   const result = await macroRescue(profileId);
-  const dbRecipes = await prisma.recipe.findMany({
-    where: { id: { in: result.options.map((o) => o.recipe.id) } },
-  });
+  const dbRecipes = await prisma.recipe.findMany({ where: { id: { in: result.options.map((o) => o.recipe.id) } } });
   const dbById = new Map(dbRecipes.map((r) => [r.id, r]));
-  const recipes = result.options.map((o) =>
-    dbRecipeToDetail(dbById.get(o.recipe.id)!, o.suggestedPortionMultiplier),
-  );
+  const recipes = result.options.map((o) => dbRecipeToDetail(dbById.get(o.recipe.id)!, o.suggestedPortionMultiplier));
 
   const r = result.remaining;
   const resultText = `Noch offen: ${Math.round(r.kcal)} kcal, ${Math.round(r.proteinG)}g Protein, ${Math.round(r.carbsG)}g Carbs, ${Math.round(r.fatG)}g Fett. ${
-    recipes.length > 0
-      ? `Vorschläge: ${recipes.map((rec) => rec.name).join(", ")}.`
-      : "Keine passenden Rezepte in der Datenbank gefunden."
+    recipes.length > 0 ? `Vorschläge: ${recipes.map((rec) => rec.name).join(", ")}.` : "Keine passenden Rezepte in der Datenbank gefunden."
   }`;
 
-  return { resultText, recipes };
+  return { resultText, recipes, action: { type: "SHOW_RECIPES" } };
 }
 
-async function runTransformRecipe(
-  profileId: string,
-  input: { recipeName: string; instruction: string },
-): Promise<ToolExecutionResult> {
-  const dbRecipes = await prisma.recipe.findMany({
-    where: { OR: [{ isCustom: false }, { ownerProfileId: profileId }] },
-  });
-  const original = dbRecipes.find((r) => r.name.toLowerCase().includes(input.recipeName.toLowerCase()));
+async function runTransformRecipeTask(profileId: string, query: AssistantQuery): Promise<TaskResult> {
+  if (!query.recipeReference) {
+    return {
+      resultText: "Welches Rezept soll ich verändern? Nenn mir den Namen.",
+      recipes: [],
+      action: { type: "ASK_CLARIFICATION" },
+    };
+  }
+  if (!query.instruction) {
+    return {
+      resultText: `Was soll sich an "${query.recipeReference}" ändern (z.B. proteinreicher, vegan, kleinere Portion)?`,
+      recipes: [],
+      action: { type: "ASK_CLARIFICATION" },
+    };
+  }
+
+  const dbRecipes = await loadOwnAndSharedRecipes(profileId);
+  const original = dbRecipes.find((r) => r.name.toLowerCase().includes(query.recipeReference!.toLowerCase()));
   if (!original) {
-    return { resultText: `Rezept "${input.recipeName}" nicht gefunden.`, recipes: [] };
+    return { resultText: `Rezept "${query.recipeReference}" nicht gefunden.`, recipes: [], action: { type: "NONE" } };
   }
 
   const transformed = await transformRecipe(
@@ -187,11 +193,11 @@ async function runTransformRecipe(
       ingredients: JSON.parse(original.ingredients) as string[],
       instructions: JSON.parse(original.instructions) as string[],
     },
-    input.instruction,
+    query.instruction,
   );
 
   const dietTypes = new Set(JSON.parse(original.dietTypes) as string[]);
-  const lower = input.instruction.toLowerCase();
+  const lower = query.instruction.toLowerCase();
   if (lower.includes("vegan")) dietTypes.add("VEGAN");
   if (lower.includes("vegetarisch")) dietTypes.add("VEGETARIAN");
   if (lower.includes("halal")) dietTypes.add("HALAL");
@@ -228,94 +234,117 @@ async function runTransformRecipe(
   return {
     resultText: `Neues Rezept gespeichert: ${recipe.name} (${recipe.kcal} kcal, ${recipe.proteinG}g Protein).${note}`,
     recipes: [recipe],
+    action: { type: "SHOW_RECIPES" },
   };
 }
 
-async function executeTool(profileId: string, name: string, input: unknown): Promise<ToolExecutionResult> {
-  switch (name) {
-    case "search_recipes":
-      return runSearchRecipes(profileId, (input ?? {}) as NutritionQuery);
-    case "decide_for_me":
-      return runDecideForMe(profileId);
-    case "macro_rescue":
-      return runMacroRescue(profileId);
-    case "transform_recipe":
-      return runTransformRecipe(profileId, input as { recipeName: string; instruction: string });
+async function runBuildMealPlanTask(profileId: string): Promise<TaskResult> {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const plan = await getOrGenerateDayPlan(profileId, today);
+
+  if (plan.items.length === 0) {
+    return {
+      resultText: "Ich konnte noch keinen Plan für heute erstellen, das passende Rezept fehlt vermutlich in deiner Datenbank.",
+      recipes: [],
+      action: { type: "NONE" },
+    };
+  }
+
+  const recipes = plan.items.map((item) => dbRecipeToDetail(item.recipe, item.portionMultiplier));
+  const totalKcal = Math.round(plan.items.reduce((sum, item) => sum + item.recipe.kcal * item.portionMultiplier, 0));
+  const resultText = `Dein Plan für heute: ${recipes.map((r) => r.name).join(", ")} (zusammen ~${totalKcal} kcal).`;
+
+  return { resultText, recipes, action: { type: "SHOW_MEAL_PLAN" } };
+}
+
+async function answerFreely(userMessage: string, history: LLMMessage[]): Promise<string> {
+  const provider = getLLMProvider();
+  const response = await provider.chat({
+    system: ANSWER_SYSTEM_PROMPT,
+    messages: [...history, { role: "user", content: userMessage }],
+    maxTokens: 500,
+  });
+  const text = response.content
+    .filter((b) => b.type === "text")
+    .map((b) => (b.type === "text" ? b.text : ""))
+    .join("\n")
+    .trim();
+  return text || "Dazu fällt mir gerade nichts Passendes ein. Frag mich gern etwas anders.";
+}
+
+async function dispatch(profileId: string, intent: AssistantIntent, query: AssistantQuery, userMessage: string, history: LLMMessage[]): Promise<TaskResult> {
+  switch (intent) {
+    case "SEARCH_RECIPES":
+      return runSearchRecipesTask(profileId, query);
+    case "USE_PANTRY":
+      return runUsePantryTask(profileId, query);
+    case "DECIDE_MEAL":
+      return runDecideMealTask(profileId, query);
+    case "MACRO_RESCUE":
+      return runMacroRescueTask(profileId);
+    case "TRANSFORM_RECIPE":
+      return runTransformRecipeTask(profileId, query);
+    case "BUILD_MEAL_PLAN":
+      return runBuildMealPlanTask(profileId);
+    case "ANSWER_QUESTION":
+    case "OTHER":
     default:
-      return { resultText: `Unbekanntes Tool "${name}".`, recipes: [] };
+      return { resultText: await answerFreely(userMessage, history), recipes: [], action: { type: "NONE" } };
   }
 }
 
 export interface AssistantTurnResult {
   reply: string;
+  intent: AssistantIntent;
   recipes: RecipeDetail[];
+  action: AssistantAction;
 }
 
-const MAX_TOOL_ROUNDS = 4;
 const HISTORY_LIMIT = 20;
+const EXTRACTION_HISTORY_LIMIT = 6;
 
 /**
- * Führt eine Assistant-Runde aus: lädt Verlauf, ruft das LLM mit den
- * verfügbaren Tools auf, führt angeforderte Tools deterministisch gegen die
- * echte Datenbank aus und speichert Nutzer- + Antwort-Nachricht.
+ * Zweistufige Assistant-Pipeline:
+ * 1. extractAssistantQuery(): LLM -> erzwungener Tool-Aufruf -> zod-validiert -> {intent, query}.
+ * 2. dispatch(): rein deterministisch (kein weiterer LLM-Aufruf außer bei
+ *    TRANSFORM_RECIPE intern und bei ANSWER_QUESTION/OTHER), ruft die echte
+ *    Domain-Logik (Rezeptsuche, Decision Engine, Macro Rescue, Meal Plan).
+ * So bekommt die Domain-Logik nie ungeprüften LLM-Output, und es passieren
+ * nie mehr LLM-Aufrufe als nötig.
  */
 export async function runFoodAssistant(profileId: string, userMessage: string): Promise<AssistantTurnResult> {
-  const provider = getLLMProvider();
-
   const history = await prisma.assistantMessage.findMany({
     where: { profileId },
-    orderBy: { createdAt: "asc" },
+    orderBy: { createdAt: "desc" },
     take: HISTORY_LIMIT,
   });
+  const chronological = history.slice().reverse();
 
-  const messages: LLMMessage[] = history.map((m) => ({
+  const llmHistory: LLMMessage[] = chronological.map((m) => ({
     role: m.role === "USER" ? "user" : "assistant",
     content: m.content,
   }));
-  messages.push({ role: "user", content: userMessage });
 
-  const suggestions = new Map<string, RecipeDetail>();
-  const toolLog: { tool: string; input: unknown }[] = [];
-  let finalText = "";
+  const extractionHistory = chronological.slice(-EXTRACTION_HISTORY_LIMIT).map((m) => ({
+    role: (m.role === "USER" ? "user" : "assistant") as "user" | "assistant",
+    content: m.content,
+  }));
 
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const response = await provider.chat({ system: SYSTEM_PROMPT, messages, tools: TOOLS });
+  const extraction = await extractAssistantQuery(userMessage, extractionHistory);
+  const intent = assistantIntentSchema.safeParse(extraction.intent).success ? extraction.intent : "OTHER";
 
-    if (response.stopReason !== "tool_use") {
-      finalText = response.content
-        .filter((b): b is TextBlock => b.type === "text")
-        .map((b) => b.text)
-        .join("\n")
-        .trim();
-      break;
-    }
-
-    messages.push({ role: "assistant", content: response.content });
-
-    const resultBlocks: ContentBlock[] = [];
-    for (const block of response.content) {
-      if (block.type !== "tool_use") continue;
-      toolLog.push({ tool: block.name, input: block.input });
-      const { resultText, recipes } = await executeTool(profileId, block.name, block.input);
-      for (const r of recipes) suggestions.set(r.id, r);
-      resultBlocks.push({ type: "tool_result", toolUseId: block.id, content: resultText });
-    }
-    messages.push({ role: "user", content: resultBlocks });
-  }
-
-  if (!finalText) {
-    finalText = "Ich konnte dazu gerade keine passende Antwort finden. Versuch es nochmal etwas anders formuliert.";
-  }
+  const { resultText, recipes, action } = await dispatch(profileId, intent, extraction.query, userMessage, llmHistory);
 
   await prisma.assistantMessage.create({ data: { profileId, role: "USER", content: userMessage } });
   await prisma.assistantMessage.create({
     data: {
       profileId,
       role: "ASSISTANT",
-      content: finalText,
-      toolCalls: toolLog.length > 0 ? JSON.stringify(toolLog) : null,
+      content: resultText,
+      toolCalls: JSON.stringify({ intent, query: extraction.query }),
     },
   });
 
-  return { reply: finalText, recipes: Array.from(suggestions.values()) };
+  return { reply: resultText, intent, recipes, action };
 }

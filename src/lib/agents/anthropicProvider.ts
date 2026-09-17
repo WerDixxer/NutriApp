@@ -6,6 +6,7 @@ import {
   type LLMMessage,
   type LLMProvider,
   type LLMResponse,
+  type ToolChoice,
 } from "./llmProvider";
 
 const DEFAULT_MODEL = "claude-sonnet-5";
@@ -33,6 +34,12 @@ function toAnthropicContent(content: string | ContentBlock[]): Anthropic.Message
 
 function toLLMMessage(msg: LLMMessage): Anthropic.MessageParam {
   return { role: msg.role, content: toAnthropicContent(msg.content) };
+}
+
+function toAnthropicToolChoice(choice?: ToolChoice): Anthropic.ToolChoice | undefined {
+  if (!choice) return undefined;
+  if (choice.type === "tool") return { type: "tool", name: choice.name };
+  return { type: choice.type };
 }
 
 function fromAnthropicContent(blocks: Anthropic.ContentBlock[]): ContentBlock[] {
@@ -76,6 +83,7 @@ export class AnthropicProvider implements LLMProvider {
         description: t.description,
         input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
       })),
+      tool_choice: toAnthropicToolChoice(params.toolChoice),
     });
 
     return {

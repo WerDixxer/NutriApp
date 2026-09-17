@@ -41,10 +41,20 @@ export interface ToolDefinition {
   inputSchema: Record<string, unknown>;
 }
 
+/**
+ * Provider-neutrale Tool-Choice: `auto` (Standard, LLM entscheidet frei),
+ * `any` (muss irgendein Tool aufrufen) oder `tool` (muss genau dieses Tool
+ * aufrufen, z.B. für erzwungene strukturierte Extraktion). Deckt sich mit
+ * Anthropics `tool_choice` und ist analog zu OpenAIs `tool_choice`-Format,
+ * damit ein Providerwechsel diesen Teil nicht anfassen muss.
+ */
+export type ToolChoice = { type: "auto" } | { type: "any" } | { type: "tool"; name: string };
+
 export interface LLMChatParams {
   system: string;
   messages: LLMMessage[];
   tools?: ToolDefinition[];
+  toolChoice?: ToolChoice;
   maxTokens?: number;
 }
 
