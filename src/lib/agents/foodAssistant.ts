@@ -1,11 +1,11 @@
-import type { DietType, MealSlot } from "@prisma/client";
 import { prisma } from "../db";
 import { dbRecipeToDetail } from "../recipeDetail";
 import type { RecipeDetail } from "@/components/RecipeDetailModal";
 import { getLLMProvider, type LLMMessage } from "./llmProvider";
 import { extractAssistantQuery } from "./queryExtraction";
 import { assistantIntentSchema, type AssistantIntent, type AssistantQuery } from "./assistantQuery";
-import { searchRecipes, type NutritionQuery, type SearchableRecipe } from "./recipeSearch";
+import { searchRecipes, type NutritionQuery } from "./recipeSearch";
+import { dbRecipeToSearchable } from "./searchableRecipe";
 import { getDecisionEngine } from "./decisionEngine";
 import { macroRescue } from "./macroRescue";
 import { transformRecipe } from "./recipeTransformer";
@@ -28,28 +28,6 @@ danach fragen kann (z.B. "Was soll ich heute essen?"), das läuft über die echt
 - Verwende niemals Gedankenstriche (—) in deinen Antworten. Nutze stattdessen Punkte, Kommas \
 oder Doppelpunkte.
 - Bei Themen ohne Bezug zu Ernährung/Rezepten: freundlich ablehnen und zurücklenken.`;
-
-type RecipeRow = Awaited<ReturnType<typeof prisma.recipe.findMany>>[number];
-
-function toSearchable(r: RecipeRow): SearchableRecipe {
-  return {
-    id: r.id,
-    name: r.name,
-    description: r.description,
-    kcal: r.kcal,
-    proteinG: r.proteinG,
-    carbsG: r.carbsG,
-    fatG: r.fatG,
-    prepTimeMin: r.prepTimeMin,
-    servings: r.servings,
-    mealSlots: JSON.parse(r.mealSlots) as MealSlot[],
-    dietTypes: JSON.parse(r.dietTypes) as DietType[],
-    allergens: JSON.parse(r.allergens) as string[],
-    ingredients: JSON.parse(r.ingredients) as string[],
-    tags: JSON.parse(r.tags) as string[],
-    isTrending: r.isTrending,
-  };
-}
 
 /** Bildet die Teilmenge von AssistantQuery ab, die recipeSearch.ts tatsächlich auswertet. */
 export function toNutritionQuery(query: AssistantQuery, extra?: Partial<NutritionQuery>): NutritionQuery {
@@ -101,7 +79,7 @@ async function runSearchRecipesTask(profileId: string, query: AssistantQuery): P
     excludedIngredients: [...(query.excludedIngredients ?? []), ...profile.dislikedFoods.map((d) => d.label)],
   });
 
-  const matches = searchRecipes(nutritionQuery, dbRecipes.map(toSearchable), 5);
+  const matches = searchRecipes(nutritionQuery, dbRecipes.map(dbRecipeToSearchable), 5);
   const recipes = matches.map((m) => dbRecipeToDetail(dbById.get(m.recipe.id)!));
 
   const resultText =
@@ -132,15 +110,17 @@ async function runDecideMealTask(profileId: string, query: AssistantQuery): Prom
   const decision = await getDecisionEngine().decide({ profileId, query });
   if (!decision) {
     return {
-      resultText: "Heute ist bereits alles aus deinem Plan geloggt, nichts mehr zu entscheiden.",
+      resultText:
+        "Ich konnte keine Mahlzeit finden, die zu deinen Allergien, deiner Ernährungsform oder deinen Ausschlüssen passt. Magst du eine Einschränkung lockern?",
       recipes: [],
       action: { type: "NONE" },
     };
   }
   const dbRecipe = await prisma.recipe.findUniqueOrThrow({ where: { id: decision.recipeId } });
   const recipe = dbRecipeToDetail(dbRecipe, decision.portionMultiplier);
+  const explanation = decision.reasons.length > 0 ? ` ${decision.reasons.join(" ")}` : "";
   return {
-    resultText: `${decision.reason} Vorschlag: ${recipe.name} um ${decision.time} Uhr (${recipe.kcal} kcal, ${recipe.proteinG}g Protein).`,
+    resultText: `Meine Wahl: ${recipe.name} (${recipe.kcal} kcal, ${recipe.proteinG}g Protein).${explanation}`,
     recipes: [recipe],
     action: { type: "SHOW_DECISION" },
   };

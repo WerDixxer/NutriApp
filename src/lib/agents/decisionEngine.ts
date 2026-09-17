@@ -1,55 +1,141 @@
-import { decideForMe } from "./decideForMe";
+import { prisma } from "../db";
+import { computeSingleItemScale } from "../foodMatching";
+import type { MacroTarget } from "../nutrition";
+import { getRemainingDailyTargets } from "./remainingTargets";
+import { dbRecipeToSearchable } from "./searchableRecipe";
+import { selectBestCandidate, type RejectedCandidate } from "./decision/selectBestCandidate";
+import { VARIETY_WINDOW_DAYS, type ScoringContext } from "./decision/softScoring";
+import type { HardConstraintContext } from "./decision/hardConstraints";
 import type { AssistantQuery } from "./assistantQuery";
 
 export interface DecisionEngineInput {
   profileId: string;
   now?: Date;
-  /** Zusätzlicher Kontext aus dem Assistant-Gespräch, z.B. explizit genannte Kalorien. Optional, wird von der v1-Engine noch nicht ausgewertet. */
+  /** Zusätzlicher Kontext aus dem Assistant-Gespräch, z.B. explizit genannte Kalorien oder Zutaten. */
   query?: AssistantQuery;
 }
 
 export interface DecisionEngineResult {
-  itemId: string;
-  slot: string;
-  time: string;
   recipeId: string;
+  recipeName: string;
   portionMultiplier: number;
-  reason: string;
+  score: number;
+  reasons: string[];
+  rejectedCandidates: RejectedCandidate[];
+  constraintsApplied: string[];
 }
 
 /**
- * Schnittstelle für "Entscheide für mich" (Zero Decision Mode, Kapitel 4).
- * Der Aufrufer (Food Assistant, später ein UI-Button) kennt nur dieses
- * Interface, nie die konkrete Implementierung, damit Kapitel 4 die Engine
- * austauschen kann, ohne Aufrufer anzufassen.
+ * Schnittstelle für "Entscheide für mich" (Zero Decision Mode). Der
+ * Aufrufer (Food Assistant, später ein UI-Button) kennt nur dieses
+ * Interface, nie die konkrete Implementierung.
  */
 export interface DecisionEngine {
   readonly name: string;
-  /** Gibt `null` zurück, wenn es nichts mehr zu entscheiden gibt (z.B. Tag bereits vollständig geloggt). */
+  /** Gibt `null` zurück, wenn kein Kandidat die Hard Constraints erfüllt (sauberer Fallback, keine Notlösung). */
   decide(input: DecisionEngineInput): Promise<DecisionEngineResult | null>;
 }
 
+async function resolveTargets(profileId: string, query: AssistantQuery | undefined, now?: Date): Promise<MacroTarget> {
+  const remaining = await getRemainingDailyTargets(profileId, now);
+  if (!query) return remaining;
+  // Explizite Angaben aus dem Gespräch (z.B. "ich habe noch 1200 kcal übrig")
+  // überschreiben nur die genannten Felder, der Rest bleibt der reale Tagesrest.
+  return {
+    kcal: query.calories ?? remaining.kcal,
+    proteinG: query.protein ?? remaining.proteinG,
+    carbsG: query.carbs ?? remaining.carbsG,
+    fatG: query.fat ?? remaining.fatG,
+  };
+}
+
+async function loadRecentRecipeCounts(profileId: string, now: Date = new Date()): Promise<Map<string, number>> {
+  const since = new Date(now);
+  since.setDate(since.getDate() - VARIETY_WINDOW_DAYS);
+  since.setHours(0, 0, 0, 0);
+
+  const entries = await prisma.logEntry.findMany({
+    where: { profileId, date: { gte: since }, recipeId: { not: null } },
+    select: { recipeId: true },
+  });
+
+  const counts = new Map<string, number>();
+  for (const e of entries) {
+    if (!e.recipeId) continue;
+    counts.set(e.recipeId, (counts.get(e.recipeId) ?? 0) + 1);
+  }
+  return counts;
+}
+
 /**
- * v1: entscheidet ausschließlich anhand des bereits generierten Tagesplans
- * (zeitlich nächste, noch nicht geloggte Mahlzeit). Berücksichtigt noch
- * NICHT: Pantry/Haltbarkeit, Budget, Abwechslung über mehrere Tage, explizite
- * Kalorien-/Makro-Wünsche aus dem Gespräch, konfigurierbare Priorisierung.
- * Das ist bewusst die volle Multi-Faktor-Engine aus Kapitel 4, hier nur die
- * Schnittstelle + eine ehrliche, tatsächlich funktionierende v1-Umsetzung.
+ * v1 der vollständigen Multi-Faktor Decision Engine. Lädt reale Daten (Profil,
+ * Rezeptdatenbank, Tagesrest, jüngste Log-Historie) und delegiert die
+ * eigentliche Entscheidung an die reine, unit-getestete Funktion
+ * `selectBestCandidate()`. Faktoren ohne verfügbare Datenquelle (Fiber,
+ * Food Waste/Haltbarkeit, Budget) tragen aktuell 0 bei, siehe softScoring.ts,
+ * statt Werte zu erfinden. Werden Pantry-, Budget- oder Household-Systeme in
+ * späteren Kapiteln gebaut, ist nur softScoring.ts/hardConstraints.ts zu
+ * erweitern, dieser Wrapper und das DecisionEngine-Interface bleiben stabil.
  */
-export class SimpleDecisionEngine implements DecisionEngine {
-  readonly name = "simple-plan-based";
+export class MultiFactorDecisionEngine implements DecisionEngine {
+  readonly name = "multi-factor-v1";
 
   async decide(input: DecisionEngineInput): Promise<DecisionEngineResult | null> {
-    const decision = await decideForMe(input.profileId, input.now);
-    if (!decision) return null;
+    const profile = await prisma.profile.findUniqueOrThrow({
+      where: { id: input.profileId },
+      include: { allergies: true, likedFoods: true, dislikedFoods: true },
+    });
+
+    const dbRecipes = await prisma.recipe.findMany({
+      where: { OR: [{ isCustom: false }, { ownerProfileId: input.profileId }] },
+    });
+    const candidates = dbRecipes.map(dbRecipeToSearchable);
+
+    const [targets, recentRecipeCounts] = await Promise.all([
+      resolveTargets(input.profileId, input.query, input.now),
+      loadRecentRecipeCounts(input.profileId, input.now),
+    ]);
+
+    const hardCtx: HardConstraintContext = {
+      allergies: [...(input.query?.allergies ?? []), ...profile.allergies.map((a) => a.label)],
+      dietType: profile.dietType,
+      excludedIngredients: input.query?.excludedIngredients ?? [],
+    };
+
+    const scoringCtx: ScoringContext = {
+      targetKcal: targets.kcal,
+      targetProteinG: targets.proteinG,
+      targetCarbsG: targets.carbsG,
+      targetFatG: targets.fatG,
+      maxCookingTimeMin: input.query?.maxCookingTimeMin,
+      availableIngredients: input.query?.ingredients,
+      likedFoods: profile.likedFoods.map((l) => l.label),
+      dislikedFoods: profile.dislikedFoods.map((d) => d.label),
+      preferences: input.query?.preferences ?? [],
+      recentRecipeCounts,
+    };
+
+    const selection = selectBestCandidate(candidates, hardCtx, scoringCtx);
+    if (!selection) return null;
+
+    const portionMultiplier = computeSingleItemScale(
+      { kcal: targets.kcal, proteinG: targets.proteinG, carbsG: targets.carbsG, fatG: targets.fatG },
+      {
+        kcal: selection.winner.kcal,
+        proteinG: selection.winner.proteinG,
+        carbsG: selection.winner.carbsG,
+        fatG: selection.winner.fatG,
+      },
+    );
+
     return {
-      itemId: decision.itemId,
-      slot: decision.slot,
-      time: decision.time,
-      recipeId: decision.recipeId,
-      portionMultiplier: decision.portionMultiplier,
-      reason: decision.reason,
+      recipeId: selection.winner.id,
+      recipeName: selection.winner.name,
+      portionMultiplier,
+      score: selection.score,
+      reasons: selection.reasons,
+      rejectedCandidates: selection.rejectedCandidates,
+      constraintsApplied: selection.constraintsApplied,
     };
   }
 }
@@ -57,6 +143,6 @@ export class SimpleDecisionEngine implements DecisionEngine {
 let cached: DecisionEngine | null = null;
 
 export function getDecisionEngine(): DecisionEngine {
-  if (!cached) cached = new SimpleDecisionEngine();
+  if (!cached) cached = new MultiFactorDecisionEngine();
   return cached;
 }
