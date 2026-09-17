@@ -1,0 +1,111 @@
+@import "tailwindcss";
+
+:root {
+  --color-bg: #ffffff;
+  --color-bg-dim: #f5f5f7;
+  --color-ink: #1d1d1f;
+  --color-ink-soft: #6e6e73;
+  --color-border: #d2d2d7;
+
+  /* Primary = Protein-Ring-Farbe, gleichzeitig die einzige "laute" Akzentfarbe der App. */
+  --color-primary: #ff3b30;
+  --color-primary-dark: #d92c22;
+  --color-primary-foreground: #ffffff;
+  --color-primary-soft: #ffe4e1;
+
+  /* Accent = Blau, für Info/Training-Kontext und die Fett-Ringfarbe. */
+  --color-accent: #0a84ff;
+  --color-accent-soft: #e3f1ff;
+
+  --color-ink-dark: #111113;
+
+  --color-protein: #ff3b30;
+  --color-carbs: #30d158;
+  --color-fat: #0a84ff;
+
+  --font-sans: var(--font-inter);
+}
+
+@theme inline {
+  --color-bg: var(--color-bg);
+  --color-bg-dim: var(--color-bg-dim);
+  --color-ink: var(--color-ink);
+  --color-ink-soft: var(--color-ink-soft);
+  --color-border: var(--color-border);
+
+  --color-primary: var(--color-primary);
+  --color-primary-dark: var(--color-primary-dark);
+  --color-primary-foreground: var(--color-primary-foreground);
+  --color-primary-soft: var(--color-primary-soft);
+
+  --color-accent: var(--color-accent);
+  --color-accent-soft: var(--color-accent-soft);
+
+  --color-ink-dark: var(--color-ink-dark);
+
+  --color-protein: var(--color-protein);
+  --color-carbs: var(--color-carbs);
+  --color-fat: var(--color-fat);
+
+  --font-sans: var(--font-sans);
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans), -apple-system, "Helvetica Neue", sans-serif;
+  letter-spacing: -0.01em;
+}
+
+/* Eine einzige Schriftfamilie, nur über Gewicht/Tracking differenziert: kein
+   Display-vs-Body-Kontrast. .font-display markiert die großen, fest
+   gewichteten Headline-Momente (enges Tracking, extra-fett). */
+.font-display {
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Sehr zurückhaltende Erhöhung, nur für tatsächlich schwebende Ebenen
+   (Modal-Overlay), nicht für gewöhnliche Listenzeilen/Abschnitte. */
+.shadow-hard {
+  box-shadow: 0 24px 48px -24px rgba(0, 0, 0, 0.18);
+}
+
+@keyframes flame-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.08);
+  }
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-flame {
+  animation: flame-pulse 2s ease-in-out infinite;
+  display: inline-block;
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.5s ease-out both;
+}
+
+::selection {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-dark);
+}
