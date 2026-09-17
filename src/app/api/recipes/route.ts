@@ -1,24 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getApiUserId } from "@/lib/session";
-import type { DietType, MealSlot } from "@prisma/client";
-
-interface RecipePayload {
-  name: string;
-  description: string;
-  kcal: number;
-  proteinG: number;
-  carbsG: number;
-  fatG: number;
-  prepTimeMin: number;
-  servings: number;
-  mealSlots: MealSlot[];
-  dietTypes: DietType[];
-  allergens: string[];
-  tags?: string[];
-  ingredients: string[];
-  instructions: string[];
-}
+import { recipePayloadSchema } from "@/lib/validation/recipes";
+import { firstZodIssue } from "@/lib/validation/zodError";
 
 export async function GET() {
   const userId = await getApiUserId();
@@ -38,11 +22,11 @@ export async function POST(request: Request) {
   const userId = await getApiUserId();
   if (!userId) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
 
-  const body = (await request.json()) as RecipePayload;
-
-  if (!body.name || !body.kcal || body.mealSlots.length === 0 || body.dietTypes.length === 0) {
-    return NextResponse.json({ error: "Pflichtfelder fehlen." }, { status: 400 });
+  const parsed = recipePayloadSchema.safeParse(await request.json());
+  if (!parsed.success) {
+    return NextResponse.json({ error: firstZodIssue(parsed.error) }, { status: 400 });
   }
+  const body = parsed.data;
 
   const profile = await prisma.profile.findUnique({ where: { userId } });
   if (!profile) {

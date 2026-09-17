@@ -1,12 +1,18 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getApiUserId } from "@/lib/session";
+import { trendTagsPayloadSchema } from "@/lib/validation/profile";
+import { firstZodIssue } from "@/lib/validation/zodError";
 
 export async function POST(request: Request) {
   const userId = await getApiUserId();
   if (!userId) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
 
-  const { tags } = (await request.json()) as { tags: string[] };
+  const parsed = trendTagsPayloadSchema.safeParse(await request.json());
+  if (!parsed.success) {
+    return NextResponse.json({ error: firstZodIssue(parsed.error) }, { status: 400 });
+  }
+  const { tags } = parsed.data;
 
   const profile = await prisma.profile.findUnique({ where: { userId } });
   if (!profile) {

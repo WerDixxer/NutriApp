@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getApiUserId } from "@/lib/session";
-import type { MealSlot } from "@prisma/client";
+import { logPayloadSchema } from "@/lib/validation/log";
+import { firstZodIssue } from "@/lib/validation/zodError";
 
 function startOfDay(date: Date): Date {
   const d = new Date(date);
@@ -29,22 +30,15 @@ export async function GET(request: Request) {
   return NextResponse.json({ entries });
 }
 
-interface LogPayload {
-  date: string;
-  slot: MealSlot;
-  recipeId?: string;
-  customName?: string;
-  kcal: number;
-  proteinG: number;
-  carbsG: number;
-  fatG: number;
-}
-
 export async function POST(request: Request) {
-  const body = (await request.json()) as LogPayload;
-
   const userId = await getApiUserId();
   if (!userId) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
+
+  const parsed = logPayloadSchema.safeParse(await request.json());
+  if (!parsed.success) {
+    return NextResponse.json({ error: firstZodIssue(parsed.error) }, { status: 400 });
+  }
+  const body = parsed.data;
 
   const profile = await prisma.profile.findUnique({ where: { userId } });
   if (!profile) {

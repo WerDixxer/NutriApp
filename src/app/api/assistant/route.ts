@@ -3,6 +3,8 @@ import { prisma } from "@/lib/db";
 import { runFoodAssistant } from "@/lib/agents/foodAssistant";
 import { LLMConfigError } from "@/lib/agents/llmProvider";
 import { getApiUserId } from "@/lib/session";
+import { assistantMessageSchema } from "@/lib/validation/assistant";
+import { firstZodIssue } from "@/lib/validation/zodError";
 
 export async function GET() {
   const userId = await getApiUserId();
@@ -24,10 +26,11 @@ export async function POST(request: Request) {
   const userId = await getApiUserId();
   if (!userId) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
 
-  const { message } = (await request.json()) as { message: string };
-  if (!message || !message.trim()) {
-    return NextResponse.json({ error: "Nachricht fehlt." }, { status: 400 });
+  const parsed = assistantMessageSchema.safeParse(await request.json());
+  if (!parsed.success) {
+    return NextResponse.json({ error: firstZodIssue(parsed.error) }, { status: 400 });
   }
+  const { message } = parsed.data;
 
   const profile = await prisma.profile.findUnique({ where: { userId } });
   if (!profile) {
@@ -35,7 +38,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await runFoodAssistant(profile.id, message.trim());
+    const result = await runFoodAssistant(profile.id, message);
     return NextResponse.json(result);
   } catch (err) {
     if (err instanceof LLMConfigError) {

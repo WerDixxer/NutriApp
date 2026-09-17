@@ -1,32 +1,10 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getApiUserId } from "@/lib/session";
-import type { ActivityLevel, DietType, Goal, Sex, SportType } from "@prisma/client";
+import { profilePayloadSchema } from "@/lib/validation/profile";
+import { firstZodIssue } from "@/lib/validation/zodError";
 
-export interface TrainingSessionPayload {
-  weekday: number;
-  startTime: string;
-  durationMin: number;
-  sportType: SportType;
-  intensity: number;
-}
-
-export interface ProfilePayload {
-  age: number;
-  sex: Sex;
-  heightCm: number;
-  weightKg: number;
-  activityLevel: ActivityLevel;
-  goal: Goal;
-  goalRateKgPerWeek: number;
-  sportType: SportType;
-  dietType: DietType;
-  likedFoods: string[];
-  dislikedFoods: string[];
-  allergies: string[];
-  priorities: string[];
-  trainingSessions: TrainingSessionPayload[];
-}
+export type { ProfilePayload, TrainingSessionPayload } from "@/lib/validation/profile";
 
 export async function GET() {
   const userId = await getApiUserId();
@@ -59,11 +37,11 @@ export async function POST(request: Request) {
   const userId = await getApiUserId();
   if (!userId) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
 
-  const body = (await request.json()) as ProfilePayload;
-
-  if (!body.age || !body.heightCm || !body.weightKg) {
-    return NextResponse.json({ error: "Pflichtfelder fehlen." }, { status: 400 });
+  const parsed = profilePayloadSchema.safeParse(await request.json());
+  if (!parsed.success) {
+    return NextResponse.json({ error: firstZodIssue(parsed.error) }, { status: 400 });
   }
+  const body = parsed.data;
 
   const existing = await prisma.profile.findUnique({ where: { userId } });
 
