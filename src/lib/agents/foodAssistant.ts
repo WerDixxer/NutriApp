@@ -7,7 +7,7 @@ import { assistantIntentSchema, type AssistantIntent, type AssistantQuery } from
 import { searchRecipes, type NutritionQuery } from "./recipeSearch";
 import { dbRecipeToSearchable } from "./searchableRecipe";
 import { getDecisionEngine } from "./decisionEngine";
-import { macroRescue } from "./macroRescue";
+import { getMacroRescueEngine } from "./macroRescueEngine";
 import { transformRecipe } from "./recipeTransformer";
 import { getOrGenerateDayPlan } from "../generateMealPlan";
 
@@ -126,16 +126,29 @@ async function runDecideMealTask(profileId: string, query: AssistantQuery): Prom
   };
 }
 
-async function runMacroRescueTask(profileId: string): Promise<TaskResult> {
-  const result = await macroRescue(profileId);
-  const dbRecipes = await prisma.recipe.findMany({ where: { id: { in: result.options.map((o) => o.recipe.id) } } });
-  const dbById = new Map(dbRecipes.map((r) => [r.id, r]));
-  const recipes = result.options.map((o) => dbRecipeToDetail(dbById.get(o.recipe.id)!, o.suggestedPortionMultiplier));
+async function runMacroRescueTask(profileId: string, query: AssistantQuery): Promise<TaskResult> {
+  const result = await getMacroRescueEngine().rescue({
+    profileId,
+    excludedIngredients: query.excludedIngredients,
+    mealType: query.mealType,
+    maxCookingTimeMin: query.maxCookingTimeMin,
+  });
 
-  const r = result.remaining;
-  const resultText = `Noch offen: ${Math.round(r.kcal)} kcal, ${Math.round(r.proteinG)}g Protein, ${Math.round(r.carbsG)}g Carbs, ${Math.round(r.fatG)}g Fett. ${
-    recipes.length > 0 ? `Vorschläge: ${recipes.map((rec) => rec.name).join(", ")}.` : "Keine passenden Rezepte in der Datenbank gefunden."
-  }`;
+  if (result.solutions.length === 0) {
+    const t = result.targets;
+    return {
+      resultText: `Noch offen: ${Math.round(t.calories)} kcal, ${Math.round(t.protein)}g Protein, ${Math.round(t.carbs)}g Carbs, ${Math.round(t.fat)}g Fett. Keine passenden Rezepte in der Datenbank gefunden.`,
+      recipes: [],
+      action: { type: "NONE" },
+    };
+  }
+
+  const dbRecipes = await prisma.recipe.findMany({ where: { id: { in: result.solutions.map((s) => s.recipeId) } } });
+  const dbById = new Map(dbRecipes.map((r) => [r.id, r]));
+  const recipes = result.solutions.map((s) => dbRecipeToDetail(dbById.get(s.recipeId)!, s.portionMultiplier));
+
+  const best = result.solutions[0];
+  const resultText = `${best.explanation}${result.solutions.length > 1 ? ` Alternativ: ${result.solutions.slice(1).map((s) => s.recipeName).join(", ")}.` : ""}`;
 
   return { resultText, recipes, action: { type: "SHOW_RECIPES" } };
 }
@@ -262,7 +275,7 @@ async function dispatch(profileId: string, intent: AssistantIntent, query: Assis
     case "DECIDE_MEAL":
       return runDecideMealTask(profileId, query);
     case "MACRO_RESCUE":
-      return runMacroRescueTask(profileId);
+      return runMacroRescueTask(profileId, query);
     case "TRANSFORM_RECIPE":
       return runTransformRecipeTask(profileId, query);
     case "BUILD_MEAL_PLAN":

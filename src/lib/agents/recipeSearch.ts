@@ -62,7 +62,7 @@ const MEAL_TYPE_ALIASES: Record<string, MealSlot> = {
   "nach dem training": "POST_WORKOUT",
 };
 
-function resolveMealSlot(mealType?: string): MealSlot | null {
+export function resolveMealSlot(mealType?: string): MealSlot | null {
   if (!mealType) return null;
   return MEAL_TYPE_ALIASES[mealType.trim().toLowerCase()] ?? null;
 }
