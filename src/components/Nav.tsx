@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { CalendarDays, ChefHat, Flame, LayoutDashboard, LogOut, MessageCircle, UserRound } from "lucide-react";
+import { CalendarDays, ChefHat, Flame, LayoutDashboard, LogOut, MessageCircle, Package, UserRound } from "lucide-react";
 import { logoutAction } from "@/lib/authActions";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Heute", icon: LayoutDashboard },
   { href: "/assistant", label: "Coach", icon: MessageCircle },
   { href: "/plan", label: "Woche", icon: CalendarDays },
+  { href: "/pantry", label: "Vorräte", icon: Package },
   { href: "/trends", label: "Trends", icon: Flame },
   { href: "/recipes", label: "Rezepte", icon: ChefHat },
   { href: "/onboarding", label: "Profil", icon: UserRound },

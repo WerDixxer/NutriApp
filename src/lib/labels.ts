@@ -52,3 +52,17 @@ export const SLOT_LABELS: Record<string, string> = {
   PRE_WORKOUT: "Vor dem Training",
   POST_WORKOUT: "Nach dem Training",
 };
+
+export const PANTRY_LOCATION_LABELS: Record<string, string> = {
+  FRIDGE: "Kühlschrank",
+  FREEZER: "Gefrierschrank",
+  PANTRY: "Vorratsschrank",
+  CUPBOARD: "Küchenschrank",
+  OTHER: "Sonstiges",
+};
+
+export const EXPIRATION_TYPE_LABELS: Record<string, string> = {
+  EXACT: "genau",
+  ESTIMATED: "geschätzt",
+  UNKNOWN: "unbekannt",
+};

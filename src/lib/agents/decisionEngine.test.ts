@@ -1,14 +1,20 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const profileFindUniqueOrThrow = vi.fn();
+const profileFindUnique = vi.fn();
 const recipeFindMany = vi.fn();
 const logEntryFindMany = vi.fn();
+const pantryItemFindMany = vi.fn();
 
 vi.mock("../db", () => ({
   prisma: {
-    profile: { findUniqueOrThrow: (...args: unknown[]) => profileFindUniqueOrThrow(...args) },
+    profile: {
+      findUniqueOrThrow: (...args: unknown[]) => profileFindUniqueOrThrow(...args),
+      findUnique: (...args: unknown[]) => profileFindUnique(...args),
+    },
     recipe: { findMany: (...args: unknown[]) => recipeFindMany(...args) },
     logEntry: { findMany: (...args: unknown[]) => logEntryFindMany(...args) },
+    pantryItem: { findMany: (...args: unknown[]) => pantryItemFindMany(...args) },
   },
 }));
 
@@ -52,6 +58,12 @@ function dbRecipe(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 describe("MultiFactorDecisionEngine (integration wrapper)", () => {
+  beforeEach(() => {
+    // Standard: kein Haushalt gefunden, Pantry-Faktor bleibt neutral, kein Crash.
+    profileFindUnique.mockResolvedValue(null);
+    pantryItemFindMany.mockResolvedValue([]);
+  });
+
   it("wählt ein konkretes Rezept anhand der realen Tagesreste, ohne Fehler bei fehlenden Pantry-Daten", async () => {
     profileFindUniqueOrThrow.mockResolvedValue(baseProfile);
     recipeFindMany.mockResolvedValue([dbRecipe()]);
@@ -88,6 +100,23 @@ describe("MultiFactorDecisionEngine (integration wrapper)", () => {
 
     const engine = new MultiFactorDecisionEngine();
     await expect(engine.decide({ profileId: "profile-1" })).resolves.toBeNull();
+  });
+
+  it("berücksichtigt vorhandene Pantry-Zutaten des Haushalts, ohne dass der Nutzer sie in der Nachricht nennen muss", async () => {
+    profileFindUniqueOrThrow.mockResolvedValue(baseProfile);
+    profileFindUnique.mockResolvedValue({ user: { householdMembership: { householdId: "household-1" } } });
+    pantryItemFindMany.mockResolvedValue([{ name: "Reis" }]);
+    recipeFindMany.mockResolvedValue([
+      dbRecipe({ id: "with-rice", ingredients: JSON.stringify(["200 g Reis"]) }),
+      dbRecipe({ id: "without-rice", ingredients: JSON.stringify(["200 g Nudeln"]) }),
+    ]);
+    logEntryFindMany.mockResolvedValue([]);
+
+    const engine = new MultiFactorDecisionEngine();
+    const result = await engine.decide({ profileId: "profile-1" });
+
+    expect(result?.recipeId).toBe("with-rice");
+    expect(result?.reasons.some((r) => r.includes("bereits hast"))).toBe(true);
   });
 
   it("übernimmt explizit genannte Kalorien aus der Anfrage als Zielwert", async () => {

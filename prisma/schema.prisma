@@ -83,7 +83,8 @@ model Household {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  members HouseholdMember[]
+  members     HouseholdMember[]
+  pantryItems PantryItem[]
 }
 
 model HouseholdMember {
@@ -317,4 +318,76 @@ model MealPlanItem {
 
   recipe    Recipe @relation(fields: [recipeId], references: [id])
   recipeId  String
+}
+
+// ---- Pantry (Kapitel 6) ----
+
+enum PantryUnit {
+  G
+  KG
+  ML
+  L
+  PIECE
+  PACK
+  PORTION
+}
+
+enum PantryLocation {
+  FRIDGE
+  FREEZER
+  PANTRY
+  CUPBOARD
+  OTHER
+}
+
+enum ExpirationDateType {
+  EXACT
+  ESTIMATED
+  UNKNOWN
+}
+
+// Leichter, global geteilter Identitäts-Katalog (kein Nährwert-/Preis-Produkt-
+// Katalog, das ist Aufgabe des NutritionProvider/Barcode Scanners, Kapitel 17).
+// Wird beim Anlegen eines PantryItem per normalisiertem Namen automatisch
+// gefunden oder neu angelegt, trägt bewusst keine erfundenen Daten.
+model Ingredient {
+  id             String   @id @default(cuid())
+  name           String
+  normalizedName String   @unique
+  defaultUnit    PantryUnit?
+  createdAt      DateTime @default(now())
+
+  pantryItems PantryItem[]
+}
+
+// Konkreter Vorratsbestand (nicht das Lebensmittel an sich, siehe Ingredient).
+// Gehört einem Haushalt, nicht einem einzelnen User, damit "gemeinsame
+// Pantry" (siehe Household-Kommentar) von Anfang an möglich ist.
+model PantryItem {
+  id          String    @id @default(cuid())
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  householdId String
+
+  ingredient   Ingredient? @relation(fields: [ingredientId], references: [id])
+  ingredientId String?
+
+  name              String
+  quantity          Float // ursprünglich erfasste/gekaufte Menge
+  remainingQuantity Float // aktuell noch vorhandene Menge, siehe src/lib/pantry/adjustQuantity.ts
+  unit              PantryUnit
+  category          String?
+
+  purchaseDate DateTime?
+  // Bewusst getrennt von expirationDateType: ein Datum allein sagt nicht, ob
+  // es sich um ein echtes Herstellerdatum oder eine Schätzung handelt.
+  expirationDate     DateTime?
+  expirationDateType ExpirationDateType @default(UNKNOWN)
+
+  location PantryLocation @default(OTHER)
+  opened   Boolean        @default(false)
+  cooked   Boolean        @default(false)
+  notes    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

@@ -1,6 +1,8 @@
 import { prisma } from "../db";
 import { computeSingleItemScale } from "../foodMatching";
 import type { MacroTarget } from "../nutrition";
+import { getHouseholdIdForProfile } from "../household";
+import { getAvailablePantryIngredientNames } from "../pantry/pantryService";
 import { getRemainingDailyTargets } from "./remainingTargets";
 import { dbRecipeToSearchable } from "./searchableRecipe";
 import { selectBestCandidate, type RejectedCandidate } from "./decision/selectBestCandidate";
@@ -91,10 +93,17 @@ export class MultiFactorDecisionEngine implements DecisionEngine {
     });
     const candidates = dbRecipes.map(dbRecipeToSearchable);
 
-    const [targets, recentRecipeCounts] = await Promise.all([
+    const [targets, recentRecipeCounts, householdId] = await Promise.all([
       resolveTargets(input.profileId, input.query, input.now),
       loadRecentRecipeCounts(input.profileId, input.now),
+      getHouseholdIdForProfile(input.profileId),
     ]);
+
+    // Vorräte aus dem Haushalt (Kapitel 6) plus in der Nachricht genannte
+    // Zutaten fließen gemeinsam in den Pantry-Faktor ein. Ohne Haushalt/ohne
+    // Pantry-Einträge bleibt die Liste einfach leer, der Faktor bleibt neutral
+    // (siehe scorePantry in softScoring.ts), nichts wird erfunden.
+    const pantryIngredientNames = householdId ? await getAvailablePantryIngredientNames(householdId) : [];
 
     const hardCtx: HardConstraintContext = {
       allergies: [...(input.query?.allergies ?? []), ...profile.allergies.map((a) => a.label)],
@@ -108,7 +117,7 @@ export class MultiFactorDecisionEngine implements DecisionEngine {
       targetCarbsG: targets.carbsG,
       targetFatG: targets.fatG,
       maxCookingTimeMin: input.query?.maxCookingTimeMin,
-      availableIngredients: input.query?.ingredients,
+      availableIngredients: [...(input.query?.ingredients ?? []), ...pantryIngredientNames],
       likedFoods: profile.likedFoods.map((l) => l.label),
       dislikedFoods: profile.dislikedFoods.map((d) => d.label),
       preferences: input.query?.preferences ?? [],

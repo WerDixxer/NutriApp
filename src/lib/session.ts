@@ -45,3 +45,25 @@ export async function requireProfileId(): Promise<string> {
   if (!profile) redirect("/onboarding");
   return profile.id;
 }
+
+/**
+ * Für API Route Handler: leitet die Haushalts-ID des eingeloggten Nutzers
+ * ausschließlich aus der Session ab (nie aus einem Client-Parameter). Das
+ * ist die zentrale Absicherung dafür, dass Pantry-Routen niemals eine vom
+ * Client übergebene `householdId` vertrauen. Gibt `null`, wenn nicht
+ * angemeldet oder (noch) keinem Haushalt zugeordnet.
+ */
+export async function getApiHouseholdId(): Promise<string | null> {
+  const userId = await getApiUserId();
+  if (!userId) return null;
+  const membership = await prisma.householdMember.findUnique({ where: { userId }, select: { householdId: true } });
+  return membership?.householdId ?? null;
+}
+
+/** Für Server Components/Pages: wie `getApiHouseholdId()`, leitet aber zu /login bzw. zeigt einen Fehler statt null zurückzugeben. */
+export async function requireHouseholdId(): Promise<string> {
+  const userId = await requireSessionUserId();
+  const membership = await prisma.householdMember.findUnique({ where: { userId }, select: { householdId: true } });
+  if (!membership) throw new Error("Kein Haushalt für diesen Account gefunden.");
+  return membership.householdId;
+}
