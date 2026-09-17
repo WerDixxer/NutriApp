@@ -84,9 +84,16 @@ describe("Faktoren ohne verfügbare Datenquelle (kein erfundener Wert)", () => {
     expect(result.reason).toBeUndefined();
   });
 
-  it("scoreFoodWaste ist neutral (0), kein Pantry-/Haltbarkeitsmodell", () => {
-    const result = scoreFoodWaste();
+  it("scoreFoodWaste ist neutral (0), wenn keine dringenden Pantry Items bekannt sind", () => {
+    const result = scoreFoodWaste(recipe(), baseCtx);
     expect(result.rawScore).toBe(0);
+  });
+
+  it("scoreFoodWaste belohnt ein Rezept, das ein dringendes Pantry Item verwertet", () => {
+    const ctx: ScoringContext = { ...baseCtx, urgentPantryIngredientNames: ["Reis"] };
+    const result = scoreFoodWaste(recipe({ ingredients: ["200 g Reis"] }), ctx);
+    expect(result.rawScore).toBe(1);
+    expect(result.reason).toContain("bald ablaufen");
   });
 
   it("scoreBudget ist neutral (0), kein Preis-/Budget-Modell", () => {

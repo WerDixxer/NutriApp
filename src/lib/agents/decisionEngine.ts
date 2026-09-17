@@ -2,7 +2,7 @@ import { prisma } from "../db";
 import { computeSingleItemScale } from "../foodMatching";
 import type { MacroTarget } from "../nutrition";
 import { getHouseholdIdForProfile } from "../household";
-import { getAvailablePantryIngredientNames } from "../pantry/pantryService";
+import { getPantryContextForHousehold } from "../rotation/rotationService";
 import { getRemainingDailyTargets } from "./remainingTargets";
 import { dbRecipeToSearchable } from "./searchableRecipe";
 import { selectBestCandidate, type RejectedCandidate } from "./decision/selectBestCandidate";
@@ -71,12 +71,12 @@ async function loadRecentRecipeCounts(profileId: string, now: Date = new Date())
 
 /**
  * v1 der vollständigen Multi-Faktor Decision Engine. Lädt reale Daten (Profil,
- * Rezeptdatenbank, Tagesrest, jüngste Log-Historie) und delegiert die
- * eigentliche Entscheidung an die reine, unit-getestete Funktion
- * `selectBestCandidate()`. Faktoren ohne verfügbare Datenquelle (Fiber,
- * Food Waste/Haltbarkeit, Budget) tragen aktuell 0 bei, siehe softScoring.ts,
- * statt Werte zu erfinden. Werden Pantry-, Budget- oder Household-Systeme in
- * späteren Kapiteln gebaut, ist nur softScoring.ts/hardConstraints.ts zu
+ * Rezeptdatenbank, Tagesrest, jüngste Log-Historie, Pantry-/Rotation-Kontext)
+ * und delegiert die eigentliche Entscheidung an die reine, unit-getestete
+ * Funktion `selectBestCandidate()`. Pantry (Kapitel 6) und Food Waste/Rotation
+ * (Kapitel 7) sind seit ihren jeweiligen Kapiteln echte Faktoren. Fiber und
+ * Budget tragen weiterhin 0 bei, siehe softScoring.ts, statt Werte zu
+ * erfinden. Wird ein Budget-System gebaut, ist nur softScoring.ts zu
  * erweitern, dieser Wrapper und das DecisionEngine-Interface bleiben stabil.
  */
 export class MultiFactorDecisionEngine implements DecisionEngine {
@@ -100,10 +100,13 @@ export class MultiFactorDecisionEngine implements DecisionEngine {
     ]);
 
     // Vorräte aus dem Haushalt (Kapitel 6) plus in der Nachricht genannte
-    // Zutaten fließen gemeinsam in den Pantry-Faktor ein. Ohne Haushalt/ohne
-    // Pantry-Einträge bleibt die Liste einfach leer, der Faktor bleibt neutral
-    // (siehe scorePantry in softScoring.ts), nichts wird erfunden.
-    const pantryIngredientNames = householdId ? await getAvailablePantryIngredientNames(householdId) : [];
+    // Zutaten fließen gemeinsam in den Pantry-Faktor ein. `urgentIngredientNames`
+    // (Kapitel 7, echte Rotation-Dringlichkeit) speist den Food-Waste-Faktor.
+    // Ohne Haushalt/ohne Pantry-Einträge bleiben beide Listen leer, die
+    // Faktoren bleiben neutral (siehe softScoring.ts), nichts wird erfunden.
+    const pantryContext = householdId
+      ? await getPantryContextForHousehold(householdId, input.now)
+      : { availableIngredientNames: [], urgentIngredientNames: [] };
 
     const hardCtx: HardConstraintContext = {
       allergies: [...(input.query?.allergies ?? []), ...profile.allergies.map((a) => a.label)],
@@ -117,11 +120,12 @@ export class MultiFactorDecisionEngine implements DecisionEngine {
       targetCarbsG: targets.carbsG,
       targetFatG: targets.fatG,
       maxCookingTimeMin: input.query?.maxCookingTimeMin,
-      availableIngredients: [...(input.query?.ingredients ?? []), ...pantryIngredientNames],
+      availableIngredients: [...(input.query?.ingredients ?? []), ...pantryContext.availableIngredientNames],
       likedFoods: profile.likedFoods.map((l) => l.label),
       dislikedFoods: profile.dislikedFoods.map((d) => d.label),
       preferences: input.query?.preferences ?? [],
       recentRecipeCounts,
+      urgentPantryIngredientNames: pantryContext.urgentIngredientNames,
     };
 
     const selection = selectBestCandidate(candidates, hardCtx, scoringCtx);

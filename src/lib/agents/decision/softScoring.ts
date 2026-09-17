@@ -17,6 +17,8 @@ export interface ScoringContext {
   preferences: string[];
   /** recipeId -> Anzahl Logs in den letzten VARIETY_WINDOW_DAYS Tagen. */
   recentRecipeCounts: Map<string, number>;
+  /** Namen von Pantry Items mit CRITICAL/HIGH Rotation-Dringlichkeit (Kapitel 7), siehe scoreFoodWaste. */
+  urgentPantryIngredientNames?: string[];
 }
 
 export interface FactorResult {
@@ -86,9 +88,25 @@ export function scoreFiber(): FactorResult {
   return { factor: "fiber", weight: SOFT_WEIGHTS.fiber, rawScore: 0, weightedScore: 0 };
 }
 
-/** Noch kein Pantry-/Haltbarkeitsdatum-Modell (Kapitel 6/7). Faktor bleibt neutral statt erfunden. */
-export function scoreFoodWaste(): FactorResult {
-  return { factor: "foodWaste", weight: SOFT_WEIGHTS.foodWaste, rawScore: 0, weightedScore: 0 };
+/**
+ * Seit Kapitel 7 scharf: belohnt Rezepte, die ein Pantry Item mit
+ * CRITICAL/HIGH Rotation-Dringlichkeit verwerten (echte Werte aus der Food
+ * Rotation Engine, siehe rotation/rotationEngine.ts). Ohne Haushalt/ohne
+ * dringende Items bleibt der Faktor weiterhin neutral, nichts wird erfunden.
+ */
+export function scoreFoodWaste(candidate: SearchableRecipe, ctx: ScoringContext): FactorResult {
+  if (!ctx.urgentPantryIngredientNames || ctx.urgentPantryIngredientNames.length === 0) {
+    return { factor: "foodWaste", weight: SOFT_WEIGHTS.foodWaste, rawScore: 0, weightedScore: 0 };
+  }
+  const matches = ctx.urgentPantryIngredientNames.filter((ing) => ingredientListIncludes(candidate.ingredients, ing));
+  const rawScore = matches.length > 0 ? 1 : 0;
+  return {
+    factor: "foodWaste",
+    weight: SOFT_WEIGHTS.foodWaste,
+    rawScore,
+    weightedScore: rawScore * SOFT_WEIGHTS.foodWaste,
+    reason: matches.length > 0 ? `Verwertet Lebensmittel, die bald ablaufen (${matches.join(", ")}).` : undefined,
+  };
 }
 
 /** Noch kein Preis-/Budget-Modell (Kapitel 8). Faktor bleibt neutral statt erfunden. */

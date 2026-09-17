@@ -1,7 +1,9 @@
 import { prisma } from "../db";
 import { findOrCreateIngredient } from "./ingredientCatalog";
 import { applyQuantityAdjustment, type QuantityAdjustment } from "./adjustQuantity";
-import { computeRotationPriority, type RotationResult } from "./rotationPriority";
+import { computeRotationResult } from "../rotation/rotationEngine";
+import { pantryItemToRotationInput } from "../rotation/pantryMapping";
+import type { RotationResult } from "../rotation/types";
 import type { CreatePantryItemInput, UpdatePantryItemInput } from "../validation/pantry";
 
 export type PantryItemWithRotation = Awaited<ReturnType<typeof prisma.pantryItem.findMany>>[number] & {
@@ -23,13 +25,10 @@ export async function listPantryItems(householdId: string, now: Date = new Date(
 
   const withRotation = items.map((item) => ({
     ...item,
-    rotation: computeRotationPriority(
-      { opened: item.opened, cooked: item.cooked, expirationDate: item.expirationDate, purchaseDate: item.purchaseDate },
-      now,
-    ),
+    rotation: computeRotationResult(pantryItemToRotationInput(item), now),
   }));
 
-  withRotation.sort((a, b) => b.rotation.score - a.rotation.score);
+  withRotation.sort((a, b) => b.rotation.priorityScore - a.rotation.priorityScore || a.id.localeCompare(b.id));
   return withRotation;
 }
 
@@ -105,16 +104,3 @@ export async function adjustPantryItemQuantity(householdId: string, id: string, 
   });
 }
 
-/**
- * Namen der aktuell vorhandenen (remainingQuantity > 0) Pantry Items eines
- * Haushalts, für die Decision Engine/Macro Rescue/Food Assistant. Ein
- * einziger geteilter Mapper, damit "vorhandene Zutaten" nicht mehrfach
- * unterschiedlich implementiert wird.
- */
-export async function getAvailablePantryIngredientNames(householdId: string): Promise<string[]> {
-  const items = await prisma.pantryItem.findMany({
-    where: { householdId, remainingQuantity: { gt: 0 } },
-    select: { name: true },
-  });
-  return items.map((i) => i.name);
-}

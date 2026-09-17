@@ -4,6 +4,15 @@ import { useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { PANTRY_LOCATION_LABELS, EXPIRATION_TYPE_LABELS } from "@/lib/labels";
 
+export interface PantryRotationView {
+  pantryItemId: string;
+  priorityScore: number;
+  urgency: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN";
+  reasons: string[];
+  warnings: string[];
+  recommendedAction: "USE_FIRST" | "USE_SOON" | "PLAN_MEAL" | "KEEP" | "CHECK" | "NO_ACTION";
+}
+
 export interface PantryItemView {
   id: string;
   name: string;
@@ -18,7 +27,7 @@ export interface PantryItemView {
   opened: boolean;
   cooked: boolean;
   notes: string | null;
-  rotation: { urgency: "HIGH" | "MEDIUM" | "LOW"; score: number; reasons: string[] };
+  rotation: PantryRotationView;
 }
 
 const UNIT_LABELS: Record<string, string> = {
@@ -34,9 +43,20 @@ const UNIT_LABELS: Record<string, string> = {
 const LOCATIONS = Object.keys(PANTRY_LOCATION_LABELS);
 
 const URGENCY_DOT: Record<string, string> = {
+  CRITICAL: "var(--color-primary)",
   HIGH: "var(--color-primary)",
   MEDIUM: "#f5a623",
   LOW: "var(--color-border)",
+  UNKNOWN: "var(--color-border)",
+};
+
+const RECOMMENDED_ACTION_LABELS: Record<string, string> = {
+  USE_FIRST: "Zuerst verbrauchen",
+  USE_SOON: "Bald verbrauchen",
+  PLAN_MEAL: "Bald einplanen",
+  CHECK: "Bitte prüfen",
+  KEEP: "Vorrätig",
+  NO_ACTION: "",
 };
 
 const inputClass = "rounded-xl bg-bg-dim px-3 py-2.5 text-sm text-ink outline-none placeholder:text-ink-soft/60";
@@ -270,7 +290,109 @@ function formToPayload(form: FormState) {
   };
 }
 
-export default function PantryClient({ initialItems }: { initialItems: PantryItemView[] }) {
+function PantryItemRow({
+  item,
+  isEditing,
+  onAdjust,
+  onToggleEdit,
+  onDelete,
+  onUpdate,
+  submitting,
+  spotlight = false,
+}: {
+  item: PantryItemView;
+  isEditing: boolean;
+  onAdjust: (type: "add" | "consume", amount: number) => void;
+  onToggleEdit: () => void;
+  onDelete: () => void;
+  onUpdate: (form: FormState) => void;
+  submitting: boolean;
+  /** In den "Zuerst verbrauchen"/"Bald einplanen"-Bereichen: Lagerort + Begründung zusätzlich sichtbar machen. */
+  spotlight?: boolean;
+}) {
+  const actionLabel = RECOMMENDED_ACTION_LABELS[item.rotation.recommendedAction];
+  const explanation = item.rotation.warnings[0] ?? item.rotation.reasons.join(" · ");
+
+  return (
+    <div>
+      <div className="flex items-center gap-4 border-b border-border py-4">
+        <span
+          className="h-2.5 w-2.5 shrink-0 rounded-full"
+          style={{ background: URGENCY_DOT[item.rotation.urgency] }}
+          title={item.rotation.reasons.join(" ") || "Keine besondere Dringlichkeit."}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[15.5px] font-semibold text-ink">{item.name}</span>
+            {item.opened && <span className="rounded-full bg-bg-dim px-2 py-0.5 text-[11px] font-medium text-ink-soft">geöffnet</span>}
+            {item.cooked && <span className="rounded-full bg-bg-dim px-2 py-0.5 text-[11px] font-medium text-ink-soft">gekocht</span>}
+            {spotlight && actionLabel && (
+              <span className="rounded-full bg-primary-soft px-2 py-0.5 text-[11px] font-semibold text-primary-dark">{actionLabel}</span>
+            )}
+          </div>
+          <div className="mt-0.5 text-xs font-medium text-ink-soft">
+            {formatQuantity(item.remainingQuantity)} / {formatQuantity(item.quantity)} {UNIT_LABELS[item.unit]}
+            {spotlight && <> · {PANTRY_LOCATION_LABELS[item.location]}</>}
+            {item.expirationDate && (
+              <>
+                {" · Ablauf "}
+                {formatDate(item.expirationDate)}
+                {item.expirationDateType === "ESTIMATED" && (
+                  <span className="text-primary"> ({EXPIRATION_TYPE_LABELS.ESTIMATED})</span>
+                )}
+              </>
+            )}
+          </div>
+          {spotlight && explanation && <div className="mt-1 text-xs text-ink-soft">{explanation}</div>}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            onClick={() => onAdjust("consume", defaultStep(item.unit))}
+            aria-label="Menge reduzieren"
+            className="flex h-8 w-8 items-center justify-center rounded-full text-ink-soft transition hover:text-ink"
+          >
+            −
+          </button>
+          <button
+            onClick={() => onAdjust("add", defaultStep(item.unit))}
+            aria-label="Menge erhöhen"
+            className="flex h-8 w-8 items-center justify-center rounded-full text-ink-soft transition hover:text-ink"
+          >
+            +
+          </button>
+          <button
+            onClick={onToggleEdit}
+            className="rounded-full px-3 py-1.5 text-xs font-semibold text-ink-soft transition hover:text-ink"
+          >
+            Bearbeiten
+          </button>
+          <button
+            onClick={onDelete}
+            aria-label="Löschen"
+            className="flex h-8 w-8 items-center justify-center rounded-full text-ink-soft transition hover:text-primary"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      {isEditing && (
+        <div className="pb-4">
+          <PantryForm initial={toForm(item)} onCancel={onToggleEdit} onSubmit={onUpdate} submitting={submitting} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function PantryClient({
+  initialItems,
+  useFirstIds,
+  planMealIds,
+}: {
+  initialItems: PantryItemView[];
+  useFirstIds: string[];
+  planMealIds: string[];
+}) {
   const [items, setItems] = useState(initialItems);
   const [sortMode, setSortMode] = useState<"urgency" | "expiration">("urgency");
   const [adding, setAdding] = useState(false);
@@ -280,7 +402,7 @@ export default function PantryClient({ initialItems }: { initialItems: PantryIte
 
   const grouped = useMemo(() => {
     const sorted = [...items].sort((a, b) => {
-      if (sortMode === "urgency") return b.rotation.score - a.rotation.score;
+      if (sortMode === "urgency") return b.rotation.priorityScore - a.rotation.priorityScore;
       const aDate = a.expirationDate ? new Date(a.expirationDate).getTime() : Infinity;
       const bDate = b.expirationDate ? new Date(b.expirationDate).getTime() : Infinity;
       return aDate - bDate;
@@ -294,6 +416,10 @@ export default function PantryClient({ initialItems }: { initialItems: PantryIte
     return map;
   }, [items, sortMode]);
 
+  const byId = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
+  const useFirstItems = useFirstIds.map((id) => byId.get(id)).filter((i): i is PantryItemView => !!i);
+  const planMealItems = planMealIds.map((id) => byId.get(id)).filter((i): i is PantryItemView => !!i);
+
   async function handleCreate(form: FormState) {
     setSubmitting(true);
     setError(null);
@@ -305,7 +431,15 @@ export default function PantryClient({ initialItems }: { initialItems: PantryIte
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Fehler beim Speichern.");
-      setItems((prev) => [...prev, { ...data.item, rotation: { urgency: "LOW", score: 0, reasons: [] } }]);
+      const placeholderRotation: PantryRotationView = {
+        pantryItemId: data.item.id,
+        priorityScore: 0,
+        urgency: "UNKNOWN",
+        reasons: [],
+        warnings: [],
+        recommendedAction: "NO_ACTION",
+      };
+      setItems((prev) => [...prev, { ...data.item, rotation: placeholderRotation }]);
       setAdding(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unbekannter Fehler");
@@ -392,6 +526,58 @@ export default function PantryClient({ initialItems }: { initialItems: PantryIte
         </p>
       )}
 
+      {useFirstItems.length > 0 && (
+        <div className="mt-10">
+          <h2 className="mb-3 text-[15px] font-bold tracking-tight text-ink">
+            Zuerst verbrauchen <span className="font-medium text-ink-soft">({useFirstItems.length})</span>
+          </h2>
+          <div>
+            {useFirstItems.map((item) => (
+              <PantryItemRow
+                key={item.id}
+                item={item}
+                spotlight
+                isEditing={editingId === item.id}
+                onAdjust={(type, amount) => handleAdjust(item, type, amount)}
+                onToggleEdit={() => {
+                  setEditingId(editingId === item.id ? null : item.id);
+                  setAdding(false);
+                }}
+                onDelete={() => handleDelete(item.id)}
+                onUpdate={(form) => handleUpdate(item.id, form)}
+                submitting={submitting}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {planMealItems.length > 0 && (
+        <div className="mt-10">
+          <h2 className="mb-3 text-[15px] font-bold tracking-tight text-ink">
+            Bald einplanen <span className="font-medium text-ink-soft">({planMealItems.length})</span>
+          </h2>
+          <div>
+            {planMealItems.map((item) => (
+              <PantryItemRow
+                key={item.id}
+                item={item}
+                spotlight
+                isEditing={editingId === item.id}
+                onAdjust={(type, amount) => handleAdjust(item, type, amount)}
+                onToggleEdit={() => {
+                  setEditingId(editingId === item.id ? null : item.id);
+                  setAdding(false);
+                }}
+                onDelete={() => handleDelete(item.id)}
+                onUpdate={(form) => handleUpdate(item.id, form)}
+                submitting={submitting}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       {LOCATIONS.map((loc) => {
         const locItems = grouped.get(loc) ?? [];
         if (locItems.length === 0) return null;
@@ -402,76 +588,19 @@ export default function PantryClient({ initialItems }: { initialItems: PantryIte
             </h2>
             <div>
               {locItems.map((item) => (
-                <div key={item.id}>
-                  <div className="flex items-center gap-4 border-b border-border py-4">
-                    <span
-                      className="h-2.5 w-2.5 shrink-0 rounded-full"
-                      style={{ background: URGENCY_DOT[item.rotation.urgency] }}
-                      title={item.rotation.reasons.join(" ") || "Keine besondere Dringlichkeit."}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-[15.5px] font-semibold text-ink">{item.name}</span>
-                        {item.opened && <span className="rounded-full bg-bg-dim px-2 py-0.5 text-[11px] font-medium text-ink-soft">geöffnet</span>}
-                        {item.cooked && <span className="rounded-full bg-bg-dim px-2 py-0.5 text-[11px] font-medium text-ink-soft">gekocht</span>}
-                      </div>
-                      <div className="mt-0.5 text-xs font-medium text-ink-soft">
-                        {formatQuantity(item.remainingQuantity)} / {formatQuantity(item.quantity)} {UNIT_LABELS[item.unit]}
-                        {item.expirationDate && (
-                          <>
-                            {" · Ablauf "}
-                            {formatDate(item.expirationDate)}
-                            {item.expirationDateType === "ESTIMATED" && (
-                              <span className="text-primary"> ({EXPIRATION_TYPE_LABELS.ESTIMATED})</span>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1">
-                      <button
-                        onClick={() => handleAdjust(item, "consume", defaultStep(item.unit))}
-                        aria-label="Menge reduzieren"
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-ink-soft transition hover:text-ink"
-                      >
-                        −
-                      </button>
-                      <button
-                        onClick={() => handleAdjust(item, "add", defaultStep(item.unit))}
-                        aria-label="Menge erhöhen"
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-ink-soft transition hover:text-ink"
-                      >
-                        +
-                      </button>
-                      <button
-                        onClick={() => {
-                          setEditingId(editingId === item.id ? null : item.id);
-                          setAdding(false);
-                        }}
-                        className="rounded-full px-3 py-1.5 text-xs font-semibold text-ink-soft transition hover:text-ink"
-                      >
-                        Bearbeiten
-                      </button>
-                      <button
-                        onClick={() => handleDelete(item.id)}
-                        aria-label="Löschen"
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-ink-soft transition hover:text-primary"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                  {editingId === item.id && (
-                    <div className="pb-4">
-                      <PantryForm
-                        initial={toForm(item)}
-                        onCancel={() => setEditingId(null)}
-                        onSubmit={(form) => handleUpdate(item.id, form)}
-                        submitting={submitting}
-                      />
-                    </div>
-                  )}
-                </div>
+                <PantryItemRow
+                  key={item.id}
+                  item={item}
+                  isEditing={editingId === item.id}
+                  onAdjust={(type, amount) => handleAdjust(item, type, amount)}
+                  onToggleEdit={() => {
+                    setEditingId(editingId === item.id ? null : item.id);
+                    setAdding(false);
+                  }}
+                  onDelete={() => handleDelete(item.id)}
+                  onUpdate={(form) => handleUpdate(item.id, form)}
+                  submitting={submitting}
+                />
               ))}
             </div>
           </div>

@@ -1,5 +1,6 @@
 import { requireHouseholdId } from "@/lib/session";
 import { listPantryItems } from "@/lib/pantry/pantryService";
+import { groupRotationResultsForDisplay } from "@/lib/rotation/rotationEngine";
 import PantryClient, { type PantryItemView } from "./PantryClient";
 
 export default async function PantryPage() {
@@ -23,6 +24,8 @@ export default async function PantryPage() {
     rotation: item.rotation,
   }));
 
+  const { useFirst, planMeal } = groupRotationResultsForDisplay(items.map((item) => item.rotation));
+
   return (
     <div>
       <span className="text-xs font-semibold uppercase tracking-wider text-ink-soft">Vorräte</span>
@@ -32,7 +35,11 @@ export default async function PantryPage() {
         oder Rezepte vorschlägt.
       </p>
       <div className="mt-10">
-        <PantryClient initialItems={itemViews} />
+        <PantryClient
+          initialItems={itemViews}
+          useFirstIds={useFirst.map((r) => r.pantryItemId)}
+          planMealIds={planMeal.map((r) => r.pantryItemId)}
+        />
       </div>
     </div>
   );

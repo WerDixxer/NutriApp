@@ -24,7 +24,7 @@ vi.mock("../db", () => ({
   },
 }));
 
-const { listPantryItems, createPantryItem, updatePantryItem, deletePantryItem, adjustPantryItemQuantity, getAvailablePantryIngredientNames } =
+const { listPantryItems, createPantryItem, updatePantryItem, deletePantryItem, adjustPantryItemQuantity } =
   await import("./pantryService");
 
 beforeEach(() => {
@@ -51,11 +51,12 @@ describe("listPantryItems", () => {
     expect(items).toEqual([]);
   });
 
-  it("sorts items by rotation urgency (score) descending", async () => {
+  it("sorts items by rotation priorityScore descending", async () => {
     const now = new Date("2026-09-17T12:00:00Z");
+    const base = { name: "Item", quantity: 1, remainingQuantity: 1, location: "OTHER", expirationDateType: "UNKNOWN" };
     pantryItemFindMany.mockResolvedValueOnce([
-      { id: "fresh", opened: false, cooked: false, expirationDate: null, purchaseDate: now },
-      { id: "expired", opened: false, cooked: false, expirationDate: new Date("2026-09-01"), purchaseDate: now },
+      { ...base, id: "fresh", opened: false, cooked: false, expirationDate: null, purchaseDate: now },
+      { ...base, id: "expired", opened: false, cooked: false, expirationDate: new Date("2026-09-01"), purchaseDate: now, expirationDateType: "EXACT" },
     ]);
     const items = await listPantryItems("household-A", now);
     expect(items[0].id).toBe("expired");
@@ -151,21 +152,5 @@ describe("Household-Isolation: fremde Pantry Items dürfen nicht gelesen/geände
 
     expect(result).not.toBeNull();
     expect(pantryItemUpdate).toHaveBeenCalled();
-  });
-});
-
-describe("getAvailablePantryIngredientNames", () => {
-  it("returns only names of items with remaining stock, scoped to the household", async () => {
-    pantryItemFindMany.mockResolvedValueOnce([{ name: "Reis" }, { name: "Hähnchen" }]);
-    const names = await getAvailablePantryIngredientNames("household-A");
-    expect(names).toEqual(["Reis", "Hähnchen"]);
-    expect(pantryItemFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { householdId: "household-A", remainingQuantity: { gt: 0 } } }),
-    );
-  });
-
-  it("returns an empty list for an empty pantry without error", async () => {
-    pantryItemFindMany.mockResolvedValueOnce([]);
-    await expect(getAvailablePantryIngredientNames("household-A")).resolves.toEqual([]);
   });
 });

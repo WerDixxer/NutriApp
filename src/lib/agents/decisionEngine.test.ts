@@ -36,6 +36,22 @@ const baseProfile = {
   dislikedFoods: [],
 };
 
+function dbPantryItem(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: "pantry-1",
+    name: "Reis",
+    opened: false,
+    cooked: false,
+    quantity: 1,
+    remainingQuantity: 1,
+    expirationDate: null,
+    expirationDateType: "UNKNOWN",
+    purchaseDate: null,
+    location: "OTHER",
+    ...overrides,
+  };
+}
+
 function dbRecipe(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: "r1",
@@ -105,7 +121,7 @@ describe("MultiFactorDecisionEngine (integration wrapper)", () => {
   it("berücksichtigt vorhandene Pantry-Zutaten des Haushalts, ohne dass der Nutzer sie in der Nachricht nennen muss", async () => {
     profileFindUniqueOrThrow.mockResolvedValue(baseProfile);
     profileFindUnique.mockResolvedValue({ user: { householdMembership: { householdId: "household-1" } } });
-    pantryItemFindMany.mockResolvedValue([{ name: "Reis" }]);
+    pantryItemFindMany.mockResolvedValue([dbPantryItem({ name: "Reis" })]);
     recipeFindMany.mockResolvedValue([
       dbRecipe({ id: "with-rice", ingredients: JSON.stringify(["200 g Reis"]) }),
       dbRecipe({ id: "without-rice", ingredients: JSON.stringify(["200 g Nudeln"]) }),
@@ -117,6 +133,25 @@ describe("MultiFactorDecisionEngine (integration wrapper)", () => {
 
     expect(result?.recipeId).toBe("with-rice");
     expect(result?.reasons.some((r) => r.includes("bereits hast"))).toBe(true);
+  });
+
+  it("bevorzugt ein Rezept, das ein bald ablaufendes Pantry Item verwertet (echter Food-Waste-Faktor, Kapitel 7)", async () => {
+    profileFindUniqueOrThrow.mockResolvedValue(baseProfile);
+    profileFindUnique.mockResolvedValue({ user: { householdMembership: { householdId: "household-1" } } });
+    pantryItemFindMany.mockResolvedValue([
+      dbPantryItem({ id: "urgent-spinach", name: "Spinat", expirationDate: new Date(), expirationDateType: "EXACT" }),
+    ]);
+    recipeFindMany.mockResolvedValue([
+      dbRecipe({ id: "uses-spinach", ingredients: JSON.stringify(["200 g Spinat"]) }),
+      dbRecipe({ id: "unrelated", ingredients: JSON.stringify(["200 g Nudeln"]) }),
+    ]);
+    logEntryFindMany.mockResolvedValue([]);
+
+    const engine = new MultiFactorDecisionEngine();
+    const result = await engine.decide({ profileId: "profile-1" });
+
+    expect(result?.recipeId).toBe("uses-spinach");
+    expect(result?.reasons.some((r) => r.includes("bald ablaufen"))).toBe(true);
   });
 
   it("übernimmt explizit genannte Kalorien aus der Anfrage als Zielwert", async () => {
