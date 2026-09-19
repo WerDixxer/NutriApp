@@ -14,7 +14,7 @@ export function dbRecipeToSearchable(r: RecipeRow): SearchableRecipe {
     proteinG: r.proteinG,
     carbsG: r.carbsG,
     fatG: r.fatG,
-    prepTimeMin: r.prepTimeMin,
+    prepTimeMin: r.totalTimeMin ?? r.prepTimeMin,
     servings: r.servings,
     mealSlots: JSON.parse(r.mealSlots) as MealSlot[],
     dietTypes: JSON.parse(r.dietTypes) as DietType[],

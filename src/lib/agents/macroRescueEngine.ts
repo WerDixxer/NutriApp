@@ -18,7 +18,12 @@ export interface MacroRescueInput {
   availableIngredients?: string[];
   mealType?: string;
   maxCookingTimeMin?: number;
-  /** Noch nicht ausgewertet, kein Preis-/Budget-Modell (Kapitel 8). */
+  /**
+   * Noch nicht ausgewertet. Seit Kapitel 8 existiert ein echtes Budget-/Preis-
+   * Modell (budget/mealCost.ts), aber Rezepte haben weiterhin nur unstrukturierte
+   * Freitext-Zutaten, ohne echte Mengen-Zuordnung wäre ein Kostenvergleich hier
+   * geraten statt berechnet. Bleibt daher entgegengenommen, aber ungenutzt.
+   */
   budgetEur?: number;
   tolerances?: Partial<MacroTolerances>;
   /** Wie viele Lösungen zurückgegeben werden (beste zuerst). Default 3. */

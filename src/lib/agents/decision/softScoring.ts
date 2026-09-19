@@ -1,4 +1,4 @@
-import { ingredientListIncludes } from "../../foodMatching";
+import { closeness, ingredientListIncludes } from "../../foodMatching";
 import type { SearchableRecipe } from "../recipeSearch";
 
 export const VARIETY_WINDOW_DAYS = 7;
@@ -52,12 +52,6 @@ export const SOFT_WEIGHTS = {
   variety: 0.15,
 } as const;
 
-function closeness(target: number, actual: number): number {
-  if (target <= 0) return actual <= 0 ? 1 : 0;
-  const diff = Math.abs(target - actual) / target;
-  return Math.max(0, 1 - diff);
-}
-
 export function scoreCalories(candidate: SearchableRecipe, ctx: ScoringContext): FactorResult {
   const rawScore = closeness(ctx.targetKcal, candidate.kcal);
   return {
@@ -109,7 +103,13 @@ export function scoreFoodWaste(candidate: SearchableRecipe, ctx: ScoringContext)
   };
 }
 
-/** Noch kein Preis-/Budget-Modell (Kapitel 8). Faktor bleibt neutral statt erfunden. */
+/**
+ * Seit Kapitel 8 existiert ein echtes Budget-Modell und ein vorbereiteter
+ * Kontext (budget/budgetContext.ts:BudgetContext), die tatsächliche
+ * Verdrahtung in die Scoring-Faktoren bleibt aber bewusst ausständig (Kapitel
+ * 8 liefert die Schnittstelle, nicht die Integration). Faktor bleibt neutral,
+ * bis eine spätere Iteration echte Rezeptkosten mit dem Budget abgleicht.
+ */
 export function scoreBudget(): FactorResult {
   return { factor: "budget", weight: SOFT_WEIGHTS.budget, rawScore: 0, weightedScore: 0 };
 }

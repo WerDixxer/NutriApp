@@ -78,6 +78,13 @@ async function loadRecentRecipeCounts(profileId: string, now: Date = new Date())
  * Budget tragen weiterhin 0 bei, siehe softScoring.ts, statt Werte zu
  * erfinden. Wird ein Budget-System gebaut, ist nur softScoring.ts zu
  * erweitern, dieser Wrapper und das DecisionEngine-Interface bleiben stabil.
+ *
+ * Household-Kontext (Kapitel 9): `getHouseholdIdForProfile()` löst für JEDES
+ * Haushaltsmitglied denselben gemeinsamen Haushalt auf, Pantry-/Rotation-
+ * Kontext ist also bereits korrekt haushaltsweit geteilt. Rollen (OWNER/
+ * MEMBER) sind hier nicht relevant: die Entscheidung bleibt für das
+ * aufrufende Profil individuell, nur die zugrunde liegenden gemeinsamen
+ * Daten (Pantry, später Budget) sind geteilt.
  */
 export class MultiFactorDecisionEngine implements DecisionEngine {
   readonly name = "multi-factor-v1";

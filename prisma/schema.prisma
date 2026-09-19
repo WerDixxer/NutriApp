@@ -74,17 +74,33 @@ model VerificationToken {
 }
 
 // Ein Haushalt bündelt mehrere User (z.B. Familie/WG). Gemeinsame Ressourcen
-// (Pantry, Shopping List, Budget, geteilte Rezepte) werden in späteren
-// Kapiteln an `Household` gehängt, nicht an einzelne `Profile`. v1: ein User
-// gehört zu maximal einem Haushalt (`userId` ist unique auf HouseholdMember).
+// (Pantry, Shopping List, Budget, geteilte Rezepte) hängen an `Household`,
+// nicht an einzelne `Profile` (siehe Kapitel 6/8). v1: ein User gehört zu
+// maximal einem Haushalt (`userId` ist unique auf HouseholdMember) -
+// ausreichend für "mehrere echte Nutzer in einem gemeinsamen Haushalt"
+// (Kapitel 9), Multi-Household-Mitgliedschaft ist bewusst kein Ziel dieses
+// Kapitels und wird nicht vorgebaut.
 model Household {
-  id        String   @id @default(cuid())
-  name      String
+  id       String @id @default(cuid())
+  name     String
+  // Vorbereitete Einstellung (Kapitel 9): Default-Währung des Haushalts,
+  // aktuell noch nicht in Budget-Formularen verdrahtet (die haben bereits
+  // ihren eigenen EUR-Default, siehe Kapitel 8), aber schon editierbar.
+  // Timezone/Serving-Konventionen bewusst NICHT ergänzt: nichts in der
+  // bestehenden Architektur wertet sie aus, ein ungenutztes Feld wäre eine
+  // erfundene Einstellung ohne echten Effekt.
+  currency Currency @default(EUR)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  members     HouseholdMember[]
-  pantryItems PantryItem[]
+  members      HouseholdMember[]
+  invites      HouseholdInvite[]
+  pantryItems  PantryItem[]
+  foodBudgets  FoodBudget[]
+  foodExpenses FoodExpense[]
+  foodPrices   FoodPrice[]
+  mealPlans    MealPlan[]
 }
 
 model HouseholdMember {
@@ -98,6 +114,32 @@ model HouseholdMember {
   // Kapitel 16), z.B. 1.3 für ein größeres Familienmitglied, 0.6 für ein Kind.
   portionFactor Float @default(1)
   joinedAt      DateTime @default(now())
+
+  mealPlanMemberships MealPlanMember[]
+  mealPlanMeals       MealPlanMeal[]
+}
+
+// Minimal-sichere Einladungs-Basis (Kapitel 9): kein E-Mail-Versand in der
+// bestehenden Architektur vorhanden (siehe src/lib/providers/), daher trägt
+// der Owner den Link manuell weiter, statt eine Fake-Mail-Funktion
+// vorzutäuschen. Der Roh-Token wird NIE gespeichert, nur sein SHA-256-Hash
+// (siehe household/token.ts) - ein DB-Leak macht keinen Token verwendbar.
+// `role` wird bei der Erzeugung auf MEMBER beschränkt (siehe
+// validation/household.ts): Ownership kann ausschließlich per expliziter
+// Übertragung wechseln, nie per Invite, damit nie zwei OWNER gleichzeitig
+// entstehen können.
+model HouseholdInvite {
+  id          String    @id @default(cuid())
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  householdId String
+
+  invitedEmail String
+  role         HouseholdRole @default(MEMBER)
+  tokenHash    String        @unique
+  expiresAt    DateTime
+  acceptedAt   DateTime?
+
+  createdAt DateTime @default(now())
 }
 
 enum Sex {
@@ -182,6 +224,7 @@ model Profile {
   mealPlanDays     MealPlanDay[]
   customRecipes    Recipe[] @relation("CustomRecipes")
   assistantMessages AssistantMessage[]
+  dismissedInsights DismissedInsight[]
 }
 
 // Generic tag table reused for liked/disliked/allergy/priority lists
@@ -246,8 +289,65 @@ model Recipe {
   nutritionSource      String  @default("DATABASE")
   generatedByAssistant Boolean @default(false)
 
+  // ---- Rezeptdatenbank (Personalisierungs-Grundlage) ----
+  // Alle Felder optional/mit Default, damit bestehende Rezepte (Freitext-
+  // Zutaten, feste Nährwerte) unverändert gültig bleiben. `nutritionSource`
+  // = "COMPUTED" heißt: kcal/Makros wurden aus den strukturierten
+  // `ingredientRows` berechnet (siehe src/lib/recipes/nutrition.ts), die
+  // festen Spalten oben sind dann nur der gespeicherte Ergebnis-Snapshot.
+  slug         String? @unique // stabiler Schlüssel für idempotentes Seeden, z.B. "protein-pancakes-with-berries"
+  category     String? // Hauptkategorie: breakfast|lunch|dinner|snack|dessert|pre-workout|post-workout
+  cookTimeMin  Int?
+  totalTimeMin Int? // prepTimeMin + cookTimeMin; Anzeige/Filter nutzen totalTimeMin ?? prepTimeMin
+  difficulty   String? // easy|medium
+  cuisine      String?
+  equipment    String @default("[]") // JSON-Array
+
+  fiberG        Float?
+  sugarG        Float?
+  saturatedFatG Float?
+  sodiumMg      Float?
+
+  mealPrepSuitable Boolean @default(false)
+  storageDays      Int? // nur setzen, wenn eine belastbare Angabe existiert
+  storage          String? // FRIDGE|FREEZER|ROOM_TEMPERATURE
+
+  // internal = mitgelieferte Seed-Rezepte, user = eigene Rezepte, external = spätere Importe.
+  sourceType       String  @default("internal")
+  sourceProvider   String?
+  sourceExternalId String?
+
+  ingredientRows RecipeIngredient[]
+
   logEntries    LogEntry[]
   mealPlanItems MealPlanItem[]
+  mealPlanMeals MealPlanMeal[]
+}
+
+// Strukturierte Zutat eines Rezepts: verweist auf die zentrale Food-Entität
+// (`Ingredient`), damit Nährwerte, Alternativen, Allergene, Präferenzen,
+// Vorrat und Preise überall dieselbe Lebensmittel-Definition nutzen. Das
+// Freitext-Array `Recipe.ingredients` bleibt für alle bestehenden Konsumenten
+// (Planner, Soft-Scoring, Meal Prep, Insights) erhalten und wird beim Seeden
+// aus diesen Zeilen erzeugt - EINE Quelle, zwei Darstellungen.
+model RecipeIngredient {
+  id       String @id @default(cuid())
+  recipe   Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  recipeId String
+  position Int
+
+  food   Ingredient? @relation(fields: [foodId], references: [id])
+  foodId String?
+
+  displayName String // so wie im Rezept gezeigt, z.B. "Joghurt" (Food: Naturjoghurt)
+  amount      Float? // null = nach Geschmack / ohne Mengenangabe
+  unit        String? // g|ml|tl|el|piece|slice|can|pinch
+  optional    Boolean @default(false)
+  note        String? // z.B. "ungekocht gewogen"
+  gramsOverride Float? // Gewicht der Menge, wenn sie vom Standard des Foods abweicht (z.B. große Tortilla)
+
+  @@index([recipeId])
+  @@index([foodId])
 }
 
 enum AssistantRole {
@@ -346,10 +446,13 @@ enum ExpirationDateType {
   UNKNOWN
 }
 
-// Leichter, global geteilter Identitäts-Katalog (kein Nährwert-/Preis-Produkt-
-// Katalog, das ist Aufgabe des NutritionProvider/Barcode Scanners, Kapitel 17).
-// Wird beim Anlegen eines PantryItem per normalisiertem Namen automatisch
-// gefunden oder neu angelegt, trägt bewusst keine erfundenen Daten.
+// Zentrale Food-Entität. Wird beim Anlegen eines PantryItem per normalisiertem
+// Namen automatisch gefunden oder neu angelegt (dann bewusst ohne erfundene
+// Daten). Kuratierte Foods (`slug` gesetzt, siehe src/lib/recipes/data/foods.ts)
+// tragen zusätzlich Kategorie, Allergene, Aliase, Diät-Klasse und Nährwerte je
+// 100 g/ml. Pantry-Einträge mit gleichem Namen verknüpfen sich dadurch von
+// selbst mit dem kuratierten Food. Nährwerte sind Referenz-/Richtwerte, keine
+// verifizierten Herstellerangaben (der NutritionProvider bleibt für Barcodes zuständig).
 model Ingredient {
   id             String   @id @default(cuid())
   name           String
@@ -357,7 +460,52 @@ model Ingredient {
   defaultUnit    PantryUnit?
   createdAt      DateTime @default(now())
 
-  pantryItems PantryItem[]
+  slug      String? @unique // stabile Food-ID der Seed-Daten, z.B. "skyr"
+  category  String? // dairy|poultry|grain|...
+  dietClass String? // vegan|vegetarian|pescatarian|omnivore: restriktivste Ernährungsform, mit der das Food vereinbar ist
+  aliases   String  @default("[]") // JSON-Array normalisierter Alternativnamen, z.B. ["hähnchen","hühnchen"]
+  allergens String  @default("[]") // JSON-Array, gleiches Vokabular wie Recipe.allergens
+  // "true" = Gewürz o.ä.: trägt nie zu Nährwerten bei, auch mit Mengenangabe ("1 Prise Salz").
+  negligible Boolean @default(false)
+  // JSON {"ml":1.03,"piece":55,"slice":45,"tl":4.6,"el":13.8,"can":130}: Gramm je Einheit.
+  unitGrams String?
+
+  // Nährwerte je 100 g (bzw. 100 ml bei Flüssigkeiten); alle null = keine Angabe.
+  kcalPer100          Float?
+  proteinPer100G      Float?
+  carbsPer100G        Float?
+  fatPer100G          Float?
+  fiberPer100G        Float?
+  sugarPer100G        Float?
+  saturatedFatPer100G Float?
+  sodiumPer100Mg      Float?
+
+  pantryItems       PantryItem[]
+  foodPrices        FoodPrice[]
+  recipeIngredients RecipeIngredient[]
+  alternatives      IngredientAlternative[] @relation("FoodAlternativesFrom")
+  alternativeFor    IngredientAlternative[] @relation("FoodAlternativesTo")
+}
+
+// Zentral gepflegte, gerichtete Alternative: "in einem Rezept mit `from` kann
+// `to` verwendet werden". Bewusst gerichtet (nicht automatisch symmetrisch):
+// Skyr -> Magerquark ist sinnvoll, Magerquark -> Skyr wird separat gepflegt.
+// `requiresContext` = die Alternative passt nur, wenn das konkrete Rezept es
+// hergibt (z.B. Avocado -> Hummus); solche Kanten werden nie automatisch
+// eingesetzt, nur als Möglichkeit gemeldet.
+model IngredientAlternative {
+  id     String     @id @default(cuid())
+  from   Ingredient @relation("FoodAlternativesFrom", fields: [fromFoodId], references: [id], onDelete: Cascade)
+  fromFoodId String
+  to     Ingredient @relation("FoodAlternativesTo", fields: [toFoodId], references: [id], onDelete: Cascade)
+  toFoodId String
+
+  type            String // similar|dietary|vegan|dairy-free|lactose-free|gluten-free|lower-calorie|higher-protein
+  requiresContext Boolean @default(false)
+  note            String?
+
+  @@unique([fromFoodId, toFoodId])
+  @@index([toFoodId])
 }
 
 // Konkreter Vorratsbestand (nicht das Lebensmittel an sich, siehe Ingredient).
@@ -390,4 +538,332 @@ model PantryItem {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// ---- Food Budget System (Kapitel 8) ----
+
+// Nur EUR in v1 (keine automatische Umrechnung). Als Enum statt Freitext
+// angelegt, damit spätere Währungen ohne Schema-Formwechsel ergänzt werden
+// können, genau wie bei den übrigen kontrollierten Enums dieses Projekts.
+enum Currency {
+  EUR
+}
+
+enum BudgetPeriodType {
+  WEEK
+  MONTH
+}
+
+enum FoodExpenseCategory {
+  GROCERIES
+  RESTAURANT
+  TAKEAWAY
+  OTHER
+}
+
+// Woher ein FoodPrice-Eintrag stammt. Aktuell wird ausschließlich
+// USER_ENTERED erzeugt (kein Preis-Provider existiert, siehe
+// src/lib/providers/priceProvider.ts), IMPORTED/PROVIDER liegen bereit,
+// damit ein künftiger Provider ohne Schema-Änderung andocken kann.
+enum PriceSource {
+  USER_ENTERED
+  IMPORTED
+  PROVIDER
+}
+
+// Geldbeträge werden ausschließlich als Int-Cent gespeichert (nie als Float),
+// um Rundungsfehler zu vermeiden. Prisma unterstützt den `Decimal`-Typ auf
+// SQLite nicht (nur auf Postgres/MySQL/SQL Server), Cent-Integer sind hier
+// die korrekte, deterministische Alternative. Siehe src/lib/budget/money.ts
+// für die einzige Stelle, an der zwischen Euro-Anzeige und Cent umgerechnet
+// wird.
+//
+// Konzeptionell strikt getrennt von PantryItem (physischer Bestand, kein
+// Preis) und von FoodPrice (ein bekannter/geschätzter Preis, keine reale
+// Ausgabe): FoodBudget ist eine wiederkehrende Einstellung ("60€ pro Woche"),
+// keine einzelne Periode-Instanz. Die tatsächlichen Periodengrenzen werden
+// deterministisch aus dem aktuellen Datum berechnet (siehe
+// src/lib/budget/period.ts), nicht hier gespeichert, damit sie nie veralten
+// können. Pro Haushalt und Periodentyp existiert höchstens ein Budget
+// (@@unique), wodurch widersprüchliche/parallele Budgets für denselben
+// Zeitraumtyp strukturell ausgeschlossen sind. "Budget ändern" = Update
+// dieser Zeile, "Budget löschen" = Zeile löschen.
+model FoodBudget {
+  id          String    @id @default(cuid())
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  householdId String
+
+  periodType  BudgetPeriodType
+  amountCents Int
+  currency    Currency @default(EUR)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([householdId, periodType])
+}
+
+// Eine tatsächlich getätigte Ausgabe (reales Geld, reales Datum). Nie
+// automatisch aus einem FoodPrice abgeleitet und nie mit einem geschätzten
+// Preis verwechselt, siehe FoodPrice-Kommentar.
+model FoodExpense {
+  id          String    @id @default(cuid())
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  householdId String
+
+  amountCents Int
+  currency    Currency @default(EUR)
+  date        DateTime
+
+  category    FoodExpenseCategory @default(GROCERIES)
+  // Freitext, z.B. "Supermarkt" oder "Restaurant XY" (wo Geld ausgegeben wurde).
+  source      String?
+  // Freitext-Notiz, z.B. "Wocheneinkauf" (zusätzlich zu source, kein Duplikat).
+  description String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Ein bekannter/geschätzter Preis für eine Zutat-Menge, NIE eine tatsächliche
+// Ausgabe (siehe FoodExpense) und niemals automatisch aus einer Ausgabe
+// abgeleitet oder umgekehrt. `householdId` optional: v1 legt nur
+// haushaltseigene, nutzereingegebene Preise an, das Feld bleibt nullable für
+// einen späteren, nicht haushaltsgebundenen Provider-Preis (z.B. ein
+// allgemeiner Marktpreis), ohne dass sich die Form ändern müsste.
+// `ingredientId` optional wie bei PantryItem: Verknüpfung zum Katalog, wenn
+// vorhanden, sonst Freitext-`name` als Fallback, nie eine erfundene
+// Umrechnung zwischen Namen.
+model FoodPrice {
+  id          String     @id @default(cuid())
+  household   Household? @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  householdId String?
+
+  ingredient   Ingredient? @relation(fields: [ingredientId], references: [id])
+  ingredientId String?
+  name         String
+
+  priceCents Int
+  currency   Currency @default(EUR)
+  quantity   Float
+  unit       PantryUnit
+
+  source     PriceSource @default(USER_ENTERED)
+  observedAt DateTime    @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---- Automatic Meal Planner (Kapitel 10) ----
+
+// Bewusst NICHT `MealPlanDay`/`MealPlanItem` wiederverwendet: diese Modelle
+// gehören zum älteren, weiterhin aktiven Single-Profile-Tagesplaner
+// (generateMealPlan.ts/planner.ts, Seite /plan) - je Profil genau eine Zeile
+// pro Datum (`@@unique([profileId, date])`), ohne Plan-als-eigene-Entität und
+// ohne Status-Lebenszyklus. Das deckt sich fachlich NICHT mit dem hier
+// geforderten haushaltsweiten, mehrtägigen Plan mit DRAFT/ACTIVE/ARCHIVED-
+// Status und mehreren Mitgliedern - eine Wiederverwendung hätte das
+// bestehende Modell erweitern müssen (destruktiv für seine heutige Bedeutung)
+// oder eine widersprüchliche Doppelbedeutung erzeugt. Beide Systeme bleiben
+// bewusst nebeneinander bestehen, siehe Kapitel-10-Bericht.
+enum MealPlanStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+model MealPlan {
+  id          String    @id @default(cuid())
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  householdId String
+
+  name      String?
+  startDate DateTime
+  endDate   DateTime
+  status    MealPlanStatus @default(DRAFT)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members MealPlanMember[]
+  meals   MealPlanMeal[]
+}
+
+// Für welche Haushaltsmitglieder dieser Plan berechnet wurde. Explizit
+// gespeichert (statt live aus der aktuellen Mitgliederliste abgeleitet),
+// damit ein Plan nachvollziehbar bleibt, auch wenn sich die Haushalts-
+// Mitgliedschaft später ändert (siehe Kapitel 9: Mitglied kann entfernt
+// werden/den Haushalt verlassen).
+model MealPlanMember {
+  id                String          @id @default(cuid())
+  mealPlan          MealPlan        @relation(fields: [mealPlanId], references: [id], onDelete: Cascade)
+  mealPlanId        String
+  householdMember   HouseholdMember @relation(fields: [householdMemberId], references: [id], onDelete: Cascade)
+  householdMemberId String
+
+  @@unique([mealPlanId, householdMemberId])
+}
+
+// Eine geplante Mahlzeit. `householdMemberId` bleibt in Kapitel 10 IMMER
+// null: der Plan wird pro Slot für die Summe der geplanten Mitglieder
+// EINMAL erzeugt (siehe planningContext.ts), noch ohne echte Per-Person-
+// Portionsaufteilung (Dynamic Portions, spätes Kapitel). Das Feld ist bereits
+// vorbereitet, damit ein Slot später mehrere Zeilen (eine je Mitglied mit
+// eigenem portionMultiplier) tragen kann, ohne das Schema nochmal zu ändern.
+model MealPlanMeal {
+  id         String   @id @default(cuid())
+  mealPlan   MealPlan @relation(fields: [mealPlanId], references: [id], onDelete: Cascade)
+  mealPlanId String
+
+  date DateTime
+  slot MealSlot
+
+  recipe   Recipe @relation(fields: [recipeId], references: [id])
+  recipeId String
+
+  householdMember   HouseholdMember? @relation(fields: [householdMemberId], references: [id], onDelete: SetNull)
+  householdMemberId String?
+
+  portionMultiplier Float  @default(1)
+  // JSON-Array NUR tatsächlich berechneter Begründungen (siehe mealPlanner/explain.ts),
+  // z.B. ["Verwendet deinen Spinat aus dem Vorrat."]. Nie erfundene Texte.
+  reasons           String @default("[]")
+
+  createdAt DateTime @default(now())
+}
+
+// ---- Evidence Library (wissenschaftliche Grundlage, Kapitel "Evidence Library") ----
+
+// Rein global-fachliche Referenzdaten (Paper + daraus manuell extrahierte,
+// mehrfach auditierte Aussagen) - bewusst OHNE jede Beziehung zu Household/
+// User/Profile. Das ist kein Versehen: es gibt dadurch strukturell keinen
+// Household-/User-Scope, über den diese Daten gefiltert, überschrieben oder
+// versehentlich mutiert werden könnten (siehe evidenceService.ts). Eine
+// spätere Evidence Engine (Recommendation Confidence, nutzerspezifisches
+// Matching, Coach-UI) baut auf diesen Daten auf, ist aber bewusst noch nicht
+// Teil dieser Erweiterung - hier werden Claims ausschließlich sauber
+// gespeichert und validiert.
+
+enum EvidenceAccessType {
+  FULL_TEXT
+  ABSTRACT_ONLY
+}
+
+// Eine wissenschaftliche Quelle (z.B. ein Paper). Claims hängen an genau
+// einer Source (`EvidenceSource` → `EvidenceClaim[]`), damit Zitation/DOI/
+// PMID nie pro Claim dupliziert werden müssen.
+model EvidenceSource {
+  id           String             @id @default(cuid())
+  citation     String
+  doi          String             @unique
+  pmid         String?            @unique
+  pmcid        String?
+  accessedText EvidenceAccessType
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  claims EvidenceClaim[]
+}
+
+enum EvidenceClaimType {
+  EVIDENCE_FINDING
+  AUTHOR_INTERPRETATION
+  PRACTICAL_RECOMMENDATION
+  CONTEXTUAL_LIMITATION
+}
+
+enum EvidenceStrength {
+  HIGH
+  MODERATE
+  LIMITED
+  UNCERTAIN
+}
+
+enum EvidenceDirection {
+  INCREASE
+  DECREASE
+  MAINTAIN
+  CONDITIONAL
+  NO_EFFECT
+}
+
+enum EvidenceClaimStatus {
+  VERIFIED
+  PENDING_FULL_TEXT
+  REJECTED
+}
+
+// Ein manuell geprüfter, quellentreuer Claim (siehe Evidence-Library-Audit-
+// Prozess: mehrfache Volltextverifikation vor Freigabe). `claimId` ist der
+// stabile, fachlich vergebene Schlüssel (z.B. "KERK17_CHO_PRE_ENDURANCE"),
+// über den der Seed idempotent upsertet - NICHT die interne `id`, die wie
+// überall sonst im Schema ein cuid bleibt.
+//
+// `evidenceStrength` ist unsere eigene, konservative interne Einschätzung
+// der Evidenzqualität für GENAU DIESEN Claim, nie das Grading der Quelle
+// selbst (Kerksick et al. 2017 verwendet kein formales Evidence-Grading-
+// System) - deshalb bewusst ein einzelner Enum-Wert, kein Freitext, in dem
+// z.B. "MODERATE/LIMITED" möglich wäre. `recommendationConfidence` wird
+// bewusst NICHT hier gespeichert - das ist Aufgabe der späteren Evidence
+// Engine, die den Claim mit einem konkreten Nutzerkontext abgleicht.
+model EvidenceClaim {
+  id       String         @id @default(cuid())
+  source   EvidenceSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  sourceId String
+
+  claimId String @unique
+
+  claimType EvidenceClaimType
+  topic     String
+  statement String
+
+  population          String?
+  trainingContext     String?
+  trainingType        String?
+  intensityOrDuration String?
+  nutritionContext    String?
+  timingContext       String?
+
+  direction        EvidenceDirection
+  evidenceStrength EvidenceStrength
+
+  // JSON-Array wie mealSlots/dietTypes/allergens/tags andernorts im Schema
+  // (SQLite kennt keine nativen Arrays), siehe format.ts-Konventionen.
+  limitations String @default("[]")
+
+  justification String
+
+  status EvidenceClaimStatus @default(VERIFIED)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sourceId])
+}
+
+// ---- Contextual Insights (Kapitel 12) ----
+
+// Insights selbst werden NIE gespeichert - sie sind pro Aufruf deterministisch
+// aus bestehenden Daten (Pantry/MealPlanDay/Budget/Recipe) neu berechnet
+// (siehe src/lib/insights/insightService.ts). "resolved" braucht deshalb
+// keine eigene Tabelle: sobald die zugrunde liegende Bedingung nicht mehr
+// zutrifft, erzeugt der nächste Lauf das Insight einfach nicht mehr erneut.
+// Nur "dismissed" (eine explizite Nutzerentscheidung) muss über den nächsten
+// Seitenaufruf hinweg erhalten bleiben - dafür genau diese eine schlanke
+// Tabelle. `insightKey` ist die stabile ID aus insights/types.ts (Entität +
+// Regel + relevanter Zeitbucket, z.B. "pantry:expiring-soon:<id>:1"), NIE die
+// interne `id` dieser Zeile. Pro Profil (nicht Haushalt): jedes
+// Haushaltsmitglied blendet Insights auf seinem eigenen Dashboard unabhängig
+// aus, auch wenn die zugrunde liegenden Pantry-/Budget-Daten geteilt sind
+// (deckt sich mit LogEntry/MealPlanDay, die ebenfalls pro Profil laufen).
+model DismissedInsight {
+  id         String   @id @default(cuid())
+  profile    Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  profileId  String
+  insightKey String
+  dismissedAt DateTime @default(now())
+
+  @@unique([profileId, insightKey])
 }

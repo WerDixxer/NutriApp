@@ -3,6 +3,9 @@
 import { useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { PANTRY_LOCATION_LABELS, EXPIRATION_TYPE_LABELS } from "@/lib/labels";
+import { Input, Select, Textarea } from "@/components/ui/Field";
+import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 export interface PantryRotationView {
   pantryItemId: string;
@@ -45,7 +48,7 @@ const LOCATIONS = Object.keys(PANTRY_LOCATION_LABELS);
 const URGENCY_DOT: Record<string, string> = {
   CRITICAL: "var(--color-primary)",
   HIGH: "var(--color-primary)",
-  MEDIUM: "#f5a623",
+  MEDIUM: "var(--color-warn-dot)",
   LOW: "var(--color-border)",
   UNKNOWN: "var(--color-border)",
 };
@@ -58,8 +61,6 @@ const RECOMMENDED_ACTION_LABELS: Record<string, string> = {
   KEEP: "Vorrätig",
   NO_ACTION: "",
 };
-
-const inputClass = "rounded-xl bg-bg-dim px-3 py-2.5 text-sm text-ink outline-none placeholder:text-ink-soft/60";
 
 interface FormState {
   name: string;
@@ -140,13 +141,12 @@ function PantryForm({
         e.preventDefault();
         onSubmit(form);
       }}
-      className="flex flex-col gap-4 rounded-2xl bg-bg-dim p-5"
+      className="flex flex-col gap-4 rounded-[var(--radius-md)] bg-bg-dim p-5"
     >
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label className="flex flex-col gap-1.5 text-sm">
           <span className="font-semibold text-ink">Name</span>
-          <input
-            className={inputClass}
+          <Input
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
             placeholder="z.B. Hähnchenbrust"
@@ -155,8 +155,7 @@ function PantryForm({
         </label>
         <label className="flex flex-col gap-1.5 text-sm">
           <span className="font-semibold text-ink">Kategorie (optional)</span>
-          <input
-            className={inputClass}
+          <Input
             value={form.category}
             onChange={(e) => setForm({ ...form, category: e.target.value })}
             placeholder="z.B. Fleisch"
@@ -167,8 +166,7 @@ function PantryForm({
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <label className="flex flex-col gap-1.5 text-sm">
           <span className="font-semibold text-ink">Menge</span>
-          <input
-            className={inputClass}
+          <Input
             type="number"
             step="any"
             min={0.01}
@@ -179,40 +177,34 @@ function PantryForm({
         </label>
         <label className="flex flex-col gap-1.5 text-sm">
           <span className="font-semibold text-ink">Einheit</span>
-          <select className={inputClass} value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })}>
+          <Select value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })}>
             {Object.entries(UNIT_LABELS).map(([v, l]) => (
               <option key={v} value={v}>
                 {l}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <label className="flex flex-col gap-1.5 text-sm">
           <span className="font-semibold text-ink">Lagerort</span>
-          <select className={inputClass} value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })}>
+          <Select value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })}>
             {LOCATIONS.map((v) => (
               <option key={v} value={v}>
                 {PANTRY_LOCATION_LABELS[v]}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <label className="flex flex-col gap-1.5 text-sm">
           <span className="font-semibold text-ink">Gekauft am</span>
-          <input
-            className={inputClass}
-            type="date"
-            value={form.purchaseDate}
-            onChange={(e) => setForm({ ...form, purchaseDate: e.target.value })}
-          />
+          <Input type="date" value={form.purchaseDate} onChange={(e) => setForm({ ...form, purchaseDate: e.target.value })} />
         </label>
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label className="flex flex-col gap-1.5 text-sm">
           <span className="font-semibold text-ink">Ablaufdatum-Typ</span>
-          <select
-            className={inputClass}
+          <Select
             value={form.expirationKnown}
             onChange={(e) => {
               const next = e.target.value as FormState["expirationKnown"];
@@ -222,13 +214,12 @@ function PantryForm({
             <option value="UNKNOWN">Kein Ablaufdatum</option>
             <option value="EXACT">Genaues Datum</option>
             <option value="ESTIMATED">Geschätztes Datum</option>
-          </select>
+          </Select>
         </label>
         {form.expirationKnown !== "UNKNOWN" && (
           <label className="flex flex-col gap-1.5 text-sm">
             <span className="font-semibold text-ink">Ablaufdatum</span>
-            <input
-              className={inputClass}
+            <Input
               type="date"
               value={form.expirationDate}
               onChange={(e) => setForm({ ...form, expirationDate: e.target.value })}
@@ -251,22 +242,18 @@ function PantryForm({
 
       <label className="flex flex-col gap-1.5 text-sm">
         <span className="font-semibold text-ink">Notizen (optional)</span>
-        <textarea
-          className={`${inputClass} min-h-[60px] resize-y`}
+        <Textarea
+          className="min-h-[60px] resize-y"
           value={form.notes}
           onChange={(e) => setForm({ ...form, notes: e.target.value })}
         />
       </label>
 
-      <div className="flex items-center gap-3">
-        <button
-          type="submit"
-          disabled={submitting}
-          className="rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-black disabled:opacity-50"
-        >
+      <div className="flex items-center gap-4">
+        <Button type="submit" size="sm" disabled={submitting}>
           Speichern
-        </button>
-        <button type="button" onClick={onCancel} className="text-sm font-semibold text-ink-soft hover:text-ink">
+        </Button>
+        <button type="button" onClick={onCancel} className="text-[13px] font-semibold text-ink-soft transition-colors duration-[var(--duration-fast)] hover:text-ink">
           Abbrechen
         </button>
       </div>
@@ -311,11 +298,11 @@ function PantryItemRow({
   spotlight?: boolean;
 }) {
   const actionLabel = RECOMMENDED_ACTION_LABELS[item.rotation.recommendedAction];
-  const explanation = item.rotation.warnings[0] ?? item.rotation.reasons.join(" · ");
+  const explanation = item.rotation.warnings[0] ?? item.rotation.reasons.join(" ");
 
   return (
     <div>
-      <div className="flex items-center gap-4 border-b border-border py-4">
+      <div className="flex min-h-[76px] items-center gap-4 border-b border-border py-4">
         <span
           className="h-2.5 w-2.5 shrink-0 rounded-full"
           style={{ background: URGENCY_DOT[item.rotation.urgency] }}
@@ -330,46 +317,46 @@ function PantryItemRow({
               <span className="rounded-full bg-primary-soft px-2 py-0.5 text-[11px] font-semibold text-primary-dark">{actionLabel}</span>
             )}
           </div>
-          <div className="mt-0.5 text-xs font-medium text-ink-soft">
+          <div className="num mt-0.5 text-[12px] font-medium text-ink-soft">
             {formatQuantity(item.remainingQuantity)} / {formatQuantity(item.quantity)} {UNIT_LABELS[item.unit]}
-            {spotlight && <> · {PANTRY_LOCATION_LABELS[item.location]}</>}
+            {spotlight && <>, {PANTRY_LOCATION_LABELS[item.location]}</>}
             {item.expirationDate && (
               <>
-                {" · Ablauf "}
+                {", Ablauf "}
                 {formatDate(item.expirationDate)}
                 {item.expirationDateType === "ESTIMATED" && (
-                  <span className="text-primary"> ({EXPIRATION_TYPE_LABELS.ESTIMATED})</span>
+                  <span className="text-warn"> ({EXPIRATION_TYPE_LABELS.ESTIMATED})</span>
                 )}
               </>
             )}
           </div>
-          {spotlight && explanation && <div className="mt-1 text-xs text-ink-soft">{explanation}</div>}
+          {spotlight && explanation && <div className="mt-1 text-[12px] text-ink-soft">{explanation}</div>}
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <button
             onClick={() => onAdjust("consume", defaultStep(item.unit))}
             aria-label="Menge reduzieren"
-            className="flex h-8 w-8 items-center justify-center rounded-full text-ink-soft transition hover:text-ink"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-ink-soft transition-colors duration-[var(--duration-fast)] hover:bg-bg-dim hover:text-ink"
           >
             −
           </button>
           <button
             onClick={() => onAdjust("add", defaultStep(item.unit))}
             aria-label="Menge erhöhen"
-            className="flex h-8 w-8 items-center justify-center rounded-full text-ink-soft transition hover:text-ink"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-ink-soft transition-colors duration-[var(--duration-fast)] hover:bg-bg-dim hover:text-ink"
           >
             +
           </button>
           <button
             onClick={onToggleEdit}
-            className="rounded-full px-3 py-1.5 text-xs font-semibold text-ink-soft transition hover:text-ink"
+            className="rounded-full px-3 py-1.5 text-xs font-semibold text-ink-soft transition-colors duration-[var(--duration-fast)] hover:text-ink"
           >
             Bearbeiten
           </button>
           <button
             onClick={onDelete}
             aria-label="Löschen"
-            className="flex h-8 w-8 items-center justify-center rounded-full text-ink-soft transition hover:text-primary"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-ink-soft transition-colors duration-[var(--duration-fast)] hover:text-primary"
           >
             <Trash2 className="h-4 w-4" />
           </button>
@@ -490,10 +477,10 @@ export default function PantryClient({
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-6">
-        <div className="flex items-center gap-2 text-sm">
+        <div className="flex items-center gap-2 text-[13.5px]">
           <span className="font-semibold text-ink-soft">Sortieren nach</span>
           <select
-            className="rounded-full bg-bg-dim px-3 py-1.5 text-sm text-ink outline-none"
+            className="rounded-full bg-bg-dim px-3 py-1.5 text-[13.5px] text-ink outline-none"
             value={sortMode}
             onChange={(e) => setSortMode(e.target.value as "urgency" | "expiration")}
           >
@@ -501,18 +488,18 @@ export default function PantryClient({
             <option value="expiration">Ablaufdatum</option>
           </select>
         </div>
-        <button
+        <Button
+          size="sm"
           onClick={() => {
             setAdding((v) => !v);
             setEditingId(null);
           }}
-          className="inline-flex items-center gap-2 rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-black"
         >
           <Plus className="h-4 w-4" /> Item hinzufügen
-        </button>
+        </Button>
       </div>
 
-      {error && <p className="mt-4 text-sm font-semibold text-primary">{error}</p>}
+      {error && <p className="mt-4 text-[13.5px] font-semibold text-danger">{error}</p>}
 
       {adding && (
         <div className="mt-6">
@@ -521,15 +508,18 @@ export default function PantryClient({
       )}
 
       {isEmpty && !adding && (
-        <p className="py-10 text-center text-sm text-ink-soft">
-          Noch nichts in deiner Pantry. Füge dein erstes Lebensmittel hinzu.
-        </p>
+        <div className="py-10">
+          <EmptyState
+            title="Noch nichts in deiner Pantry"
+            description="Füge dein erstes Lebensmittel hinzu. Wir berücksichtigen es sofort bei deinem Plan."
+          />
+        </div>
       )}
 
       {useFirstItems.length > 0 && (
         <div className="mt-10">
-          <h2 className="mb-3 text-[15px] font-bold tracking-tight text-ink">
-            Zuerst verbrauchen <span className="font-medium text-ink-soft">({useFirstItems.length})</span>
+          <h2 className="text-h3 mb-3 text-ink">
+            Zuerst verbrauchen <span className="text-label font-medium text-ink-faint">({useFirstItems.length})</span>
           </h2>
           <div>
             {useFirstItems.map((item) => (
@@ -554,8 +544,8 @@ export default function PantryClient({
 
       {planMealItems.length > 0 && (
         <div className="mt-10">
-          <h2 className="mb-3 text-[15px] font-bold tracking-tight text-ink">
-            Bald einplanen <span className="font-medium text-ink-soft">({planMealItems.length})</span>
+          <h2 className="text-h3 mb-3 text-ink">
+            Bald einplanen <span className="text-label font-medium text-ink-faint">({planMealItems.length})</span>
           </h2>
           <div>
             {planMealItems.map((item) => (
@@ -583,8 +573,8 @@ export default function PantryClient({
         if (locItems.length === 0) return null;
         return (
           <div key={loc} className="mt-10">
-            <h2 className="mb-3 text-[15px] font-bold tracking-tight text-ink">
-              {PANTRY_LOCATION_LABELS[loc]} <span className="font-medium text-ink-soft">({locItems.length})</span>
+            <h2 className="text-h3 mb-3 text-ink">
+              {PANTRY_LOCATION_LABELS[loc]} <span className="text-label font-medium text-ink-faint">({locItems.length})</span>
             </h2>
             <div>
               {locItems.map((item) => (

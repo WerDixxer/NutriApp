@@ -5,10 +5,10 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { ChefHat } from "lucide-react";
 import { TagInput } from "@/components/TagInput";
+import { Input, Textarea } from "@/components/ui/Field";
+import { Pill } from "@/components/ui/Pill";
+import { Button } from "@/components/ui/Button";
 import { DIET_LABELS, SLOT_LABELS } from "@/lib/labels";
-
-const inputClass =
-  "rounded-xl bg-bg-dim px-3 py-2.5 text-sm text-ink outline-none placeholder:text-ink-soft/60";
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -16,28 +16,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span className="font-semibold text-ink">{label}</span>
       {children}
     </label>
-  );
-}
-
-function CheckboxChip({
-  label,
-  checked,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(!checked)}
-      className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
-        checked ? "bg-ink text-white" : "bg-bg-dim text-ink-soft hover:text-ink"
-      }`}
-    >
-      {label}
-    </button>
   );
 }
 
@@ -122,8 +100,7 @@ export default function NewRecipeForm() {
       <div className="flex flex-col gap-6 border-t border-border pt-8">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Name des Gerichts">
-            <input
-              className={inputClass}
+            <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="z.B. Omas Linsensuppe"
@@ -131,8 +108,7 @@ export default function NewRecipeForm() {
             />
           </Field>
           <Field label="Kurzbeschreibung">
-            <input
-              className={inputClass}
+            <Input
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Ein Satz zum Gericht"
@@ -142,8 +118,7 @@ export default function NewRecipeForm() {
 
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <Field label="Kalorien (kcal)">
-            <input
-              className={inputClass}
+            <Input
               type="number"
               min={0}
               value={kcal}
@@ -152,64 +127,35 @@ export default function NewRecipeForm() {
             />
           </Field>
           <Field label="Protein (g)">
-            <input
-              className={inputClass}
-              type="number"
-              min={0}
-              value={proteinG}
-              onChange={(e) => setProteinG(Number(e.target.value))}
-            />
+            <Input type="number" min={0} value={proteinG} onChange={(e) => setProteinG(Number(e.target.value))} />
           </Field>
           <Field label="Carbs (g)">
-            <input
-              className={inputClass}
-              type="number"
-              min={0}
-              value={carbsG}
-              onChange={(e) => setCarbsG(Number(e.target.value))}
-            />
+            <Input type="number" min={0} value={carbsG} onChange={(e) => setCarbsG(Number(e.target.value))} />
           </Field>
           <Field label="Fett (g)">
-            <input
-              className={inputClass}
-              type="number"
-              min={0}
-              value={fatG}
-              onChange={(e) => setFatG(Number(e.target.value))}
-            />
+            <Input type="number" min={0} value={fatG} onChange={(e) => setFatG(Number(e.target.value))} />
           </Field>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
           <Field label="Zubereitungszeit (Min.)">
-            <input
-              className={inputClass}
-              type="number"
-              min={1}
-              value={prepTimeMin}
-              onChange={(e) => setPrepTimeMin(Number(e.target.value))}
-            />
+            <Input type="number" min={1} value={prepTimeMin} onChange={(e) => setPrepTimeMin(Number(e.target.value))} />
           </Field>
           <Field label="Portionen">
-            <input
-              className={inputClass}
-              type="number"
-              min={1}
-              value={servings}
-              onChange={(e) => setServings(Number(e.target.value))}
-            />
+            <Input type="number" min={1} value={servings} onChange={(e) => setServings(Number(e.target.value))} />
           </Field>
         </div>
 
         <Field label="Passt als...">
           <div className="flex flex-wrap gap-2">
             {Object.entries(SLOT_LABELS).map(([key, label]) => (
-              <CheckboxChip
+              <Pill
                 key={key}
-                label={label}
-                checked={mealSlots.includes(key)}
-                onChange={(c) => toggle(mealSlots, setMealSlots, key, c)}
-              />
+                active={mealSlots.includes(key)}
+                onClick={() => toggle(mealSlots, setMealSlots, key, !mealSlots.includes(key))}
+              >
+                {label}
+              </Pill>
             ))}
           </div>
         </Field>
@@ -217,12 +163,13 @@ export default function NewRecipeForm() {
         <Field label="Passt zu diesen Ernährungsformen">
           <div className="flex flex-wrap gap-2">
             {Object.entries(DIET_LABELS).map(([key, label]) => (
-              <CheckboxChip
+              <Pill
                 key={key}
-                label={label}
-                checked={dietTypes.includes(key)}
-                onChange={(c) => toggle(dietTypes, setDietTypes, key, c)}
-              />
+                active={dietTypes.includes(key)}
+                onClick={() => toggle(dietTypes, setDietTypes, key, !dietTypes.includes(key))}
+              >
+                {label}
+              </Pill>
             ))}
           </div>
         </Field>
@@ -246,8 +193,8 @@ export default function NewRecipeForm() {
         </Field>
 
         <Field label="Zutaten, eine pro Zeile, mit Menge">
-          <textarea
-            className={`${inputClass} min-h-[120px] resize-y font-mono text-xs`}
+          <Textarea
+            className="min-h-[120px] resize-y font-mono text-xs"
             value={ingredientsText}
             onChange={(e) => setIngredientsText(e.target.value)}
             placeholder={"200 g Hüttenkäse\n1 EL Honig\n80 g Beeren"}
@@ -255,8 +202,8 @@ export default function NewRecipeForm() {
         </Field>
 
         <Field label="Zubereitung, ein Schritt pro Zeile">
-          <textarea
-            className={`${inputClass} min-h-[140px] resize-y text-sm`}
+          <Textarea
+            className="min-h-[140px] resize-y text-sm"
             value={instructionsText}
             onChange={(e) => setInstructionsText(e.target.value)}
             placeholder={"Hüttenkäse in eine Schale geben.\nBeeren waschen und darüber verteilen.\n..."}
@@ -264,17 +211,12 @@ export default function NewRecipeForm() {
         </Field>
       </div>
 
-      {error && <p className="text-sm font-semibold text-primary">{error}</p>}
+      {error && <p className="text-[13.5px] font-semibold text-danger">{error}</p>}
 
-      <motion.button
-        whileTap={{ scale: 0.98 }}
-        type="submit"
-        disabled={submitting}
-        className="inline-flex items-center justify-center gap-2 rounded-full bg-ink px-5 py-3.5 text-sm font-semibold text-white transition hover:bg-black disabled:opacity-50"
-      >
+      <Button type="submit" disabled={submitting}>
         <ChefHat className="h-4 w-4" />
         {submitting ? "Speichern…" : "Rezept speichern"}
-      </motion.button>
+      </Button>
     </motion.form>
   );
 }

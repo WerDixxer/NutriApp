@@ -1,3 +1,4 @@
+import { MessageCircle, Camera } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { calcFullTargets } from "@/lib/nutrition";
 import { getOrGenerateDayPlan } from "@/lib/generateMealPlan";
@@ -6,6 +7,12 @@ import { GOAL_LABELS } from "@/lib/labels";
 import { dbRecipeToDetail } from "@/lib/recipeDetail";
 import { DecideRing } from "@/components/DecideRing";
 import { requireProfile } from "@/lib/session";
+import { analyzeRecipesForProfile, toPersonalizationInput } from "@/lib/recipes/recipeService";
+import { getInsightsForProfile } from "@/lib/insights/insightService";
+import { forSurface } from "@/lib/insights/dedupe";
+import type { InsightView } from "@/components/insights/InsightsPanel";
+
+const DASHBOARD_INSIGHT_LIMIT = 3;
 
 function startOfDay(date: Date): Date {
   const d = new Date(date);
@@ -34,11 +41,22 @@ export default async function DashboardPage() {
     orderBy: { createdAt: "asc" },
   });
 
+  // Lieblingslebensmittel -> personalisierte Rezeptvariante ("Magerquark statt Skyr").
+  // Nur Rezepte mit strukturierten Zutaten werden angepasst, alle anderen bleiben Original.
+  const analyses = await analyzeRecipesForProfile(
+    profile.id,
+    plan.items.map((item) => ({ id: item.recipe.id, servings: item.recipe.servings, ingredients: item.recipe.ingredients })),
+  );
+
   const planItems: PlanItemView[] = plan.items.map((item) => ({
     id: item.id,
     slot: item.slot,
     time: item.time,
-    recipe: dbRecipeToDetail(item.recipe, item.portionMultiplier),
+    recipe: dbRecipeToDetail(
+      item.recipe,
+      item.portionMultiplier,
+      toPersonalizationInput(analyses.get(item.recipe.id)?.personalized),
+    ),
   }));
 
   const entryViews: LogEntryView[] = entries.map((e) => ({
@@ -54,30 +72,40 @@ export default async function DashboardPage() {
   const todayLabel = today.toLocaleDateString("de-DE", { weekday: "long", day: "2-digit", month: "long" });
   const trainingToday = profile.sportType !== "NONE";
 
+  const allInsights = await getInsightsForProfile(profile.id, today);
+  const insights: InsightView[] = forSurface(allInsights, "DASHBOARD")
+    .slice(0, DASHBOARD_INSIGHT_LIMIT)
+    .map((i) => ({ id: i.id, message: i.message, priority: i.priority, action: i.action }));
+
   return (
     <div>
-      <div className="text-sm font-semibold text-ink-soft">{todayLabel}</div>
-      <h1 className="font-display mt-2 text-[40px] leading-[1.03] text-ink sm:text-[56px]">
-        Was isst du heute,
-        <br />
-        {profile.user.name}?
-      </h1>
-      <p className="mt-4 max-w-[46ch] text-[17px] leading-relaxed text-ink-soft">
-        {GOAL_LABELS[profile.goal]}
-        {trainingToday ? " · Training eingeplant" : ""}. Dein Tag ist auf dein Ziel abgestimmt, du
-        musst nichts nachrechnen.
-      </p>
+      <div className="flex items-baseline justify-between gap-4">
+        <span className="text-label text-ink-faint">{todayLabel}</span>
+        <span className="flex items-center gap-2.5 text-label text-ink-faint">
+          <span>{GOAL_LABELS[profile.goal]}</span>
+          {trainingToday && (
+            <>
+              <span className="h-3 w-px bg-border" aria-hidden="true" />
+              <span>Training heute</span>
+            </>
+          )}
+        </span>
+      </div>
 
-      <div className="mt-9 flex flex-wrap items-center gap-5">
+      <div className="mt-6 flex flex-wrap items-center gap-3">
         <DecideRing />
         <a
           href="/assistant"
-          className="inline-flex items-center gap-2 rounded-full bg-bg-dim px-5 py-3.5 text-[15px] font-semibold text-ink transition hover:bg-[#e8e8ed]"
+          className="glass inline-flex h-11 items-center gap-2 rounded-full border px-4 text-[14px] font-medium text-ink transition-colors duration-[var(--duration-fast)] hover:bg-white"
         >
-          🎙️ Coach fragen
+          <MessageCircle className="h-4 w-4" /> Coach fragen
         </a>
-        <span className="inline-flex items-center gap-2 rounded-full bg-bg-dim px-5 py-3.5 text-[15px] font-semibold text-ink-soft">
-          📸 Scannen · bald
+        <span className="inline-flex h-11 items-center gap-2 px-2 text-[13px] font-medium text-ink-faint">
+          <Camera className="h-4 w-4" />
+          Scannen
+          <span className="rounded-full bg-bg-dim px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+            Bald verfügbar
+          </span>
         </span>
       </div>
 
@@ -86,6 +114,7 @@ export default async function DashboardPage() {
         targets={targets}
         initialPlanItems={planItems}
         initialEntries={entryViews}
+        insights={insights}
       />
     </div>
   );

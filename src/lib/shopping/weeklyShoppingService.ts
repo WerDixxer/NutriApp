@@ -1,0 +1,92 @@
+import { prisma } from "../db";
+import { getHouseholdIdForProfile } from "../household";
+import { getHouseholdRotation } from "../rotation/rotationService";
+import type { MealForAggregation } from "../mealPrep/aggregation";
+import type { PantryItemForMatch } from "../mealPrep/enrichment";
+import type { RotationUrgency } from "../rotation/types";
+import { calculateWeeklyShopping, type WeeklyShoppingCalculation } from "./weeklyShopping";
+
+export interface WeeklyShoppingResult extends WeeklyShoppingCalculation {
+  /** Montag 00:00 (lokal) der berechneten Woche. */
+  weekStart: Date;
+  /** Sonntag 00:00 (lokal) der berechneten Woche. */
+  weekEnd: Date;
+  /** Für wie viele der 7 Tage bereits ein Plan existiert (Rest fließt NICHT ein, siehe getWeeklyShoppingForProfile). */
+  plannedDays: number;
+}
+
+function startOfDay(date: Date): Date {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+/** Woche Montag bis Sonntag, wie sie auch /plan darstellt. */
+export function weekRangeFor(date: Date): { start: Date; end: Date } {
+  const start = startOfDay(date);
+  start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  return { start, end };
+}
+
+/**
+ * Einkaufsbedarf einer Woche aus dem PERSÖNLICHEN Tagesplan (MealPlanDay /
+ * MealPlanItem, derselbe Plan wie /plan und /dashboard). Der HAUSHALTS-Planer
+ * (MealPlan / MealPlanMeal, /meal-plans) wird hier bewusst nicht gelesen; die
+ * Berechnung selbst (calculateWeeklyShopping) nimmt nur MealForAggregation
+ * und ließe sich später mit derselben Abbildung auch darauf anwenden.
+ *
+ * Rein lesend: erzeugt NIE einen MealPlanDay (das bleibt getOrGenerateDayPlan(),
+ * das /plan beim Öffnen aufruft). Tage ohne Plan fließen nicht ein, `plannedDays`
+ * macht das sichtbar.
+ *
+ * Der Vorrat gehört dem Haushalt des Profils; ohne Haushalt gilt er als leer,
+ * alles gilt dann als fehlend. Der Vorrat wird nur gelesen, nie verändert.
+ */
+export async function getWeeklyShoppingForProfile(
+  profileId: string,
+  date: Date = new Date(),
+  now: Date = new Date(),
+): Promise<WeeklyShoppingResult> {
+  const { start, end } = weekRangeFor(date);
+
+  const [days, householdId] = await Promise.all([
+    prisma.mealPlanDay.findMany({
+      where: { profileId, date: { gte: start, lte: end } },
+      include: { items: { include: { recipe: true } } },
+      orderBy: { date: "asc" },
+    }),
+    getHouseholdIdForProfile(profileId),
+  ]);
+
+  const meals: MealForAggregation[] = days.flatMap((day) =>
+    day.items.map((item) => ({
+      id: item.id,
+      date: day.date,
+      slot: item.slot,
+      recipeId: item.recipeId,
+      recipeName: item.recipe.name,
+      ingredients: JSON.parse(item.recipe.ingredients) as string[],
+      portionMultiplier: item.portionMultiplier,
+    })),
+  );
+
+  let pantryItems: PantryItemForMatch[] = [];
+  let urgencyByItemId = new Map<string, RotationUrgency>();
+  if (householdId) {
+    const [items, rotation] = await Promise.all([
+      prisma.pantryItem.findMany({ where: { householdId }, select: { id: true, name: true, remainingQuantity: true, unit: true } }),
+      getHouseholdRotation(householdId, now),
+    ]);
+    pantryItems = items;
+    urgencyByItemId = new Map(rotation.results.map((r) => [r.pantryItemId, r.urgency]));
+  }
+
+  return {
+    weekStart: start,
+    weekEnd: end,
+    plannedDays: days.filter((d) => d.items.length > 0).length,
+    ...calculateWeeklyShopping(meals, pantryItems, urgencyByItemId),
+  };
+}

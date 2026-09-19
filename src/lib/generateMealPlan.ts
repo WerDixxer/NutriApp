@@ -3,9 +3,11 @@ import { prisma } from "./db";
 import { calcFullTargets } from "./nutrition";
 import { matchesAllergen } from "./foodMatching";
 import {
+  MAX_VARIETY_ACCURACY_LOSS,
   buildDayPlan,
   computeJointPortionScales,
   computePortionScale,
+  dayMacroDeviation,
   selectRecipeForSlot,
   type RecipeCandidate,
 } from "./planner";
@@ -17,11 +19,49 @@ function startOfDay(date: Date): Date {
 }
 
 /**
+ * Rezept-ID -> wie oft das Rezept in der laufenden Wochenplanung bereits
+ * gewählt wurde. Gilt nur für einen Generierungslauf (nie modulweit oder in
+ * der DB gespeichert) und geht als weicher Abschlag in die Rezeptwahl ein,
+ * siehe planner.ts:repetitionPenalty().
+ */
+export type RecipeUsage = Map<string, number>;
+
+function addUsage(usage: RecipeUsage, recipeIds: string[]) {
+  for (const id of recipeIds) usage.set(id, (usage.get(id) ?? 0) + 1);
+}
+
+/** Montag bis Sonntag (lokal, 00:00) der Woche, die `day` enthält, wie /plan sie darstellt. */
+function weekBounds(day: Date): { start: Date; end: Date } {
+  const start = startOfDay(day);
+  start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  return { start, end };
+}
+
+/** Bereits gespeicherte Tage derselben Woche, damit auch einzeln erzeugte Tage (Dashboard) zur Woche passen. */
+async function loadWeekUsage(profileId: string, day: Date): Promise<RecipeUsage> {
+  const { start, end } = weekBounds(day);
+  const days = await prisma.mealPlanDay.findMany({
+    where: { profileId, date: { gte: start, lte: end } },
+    select: { items: { select: { recipeId: true } } },
+  });
+  const usage: RecipeUsage = new Map();
+  for (const d of days) addUsage(usage, d.items.map((item) => item.recipeId));
+  return usage;
+}
+
+/**
  * Holt den Plan für einen Tag aus der DB, oder generiert und speichert ihn,
  * falls noch keiner existiert. Ein einmal generierter Tag bleibt stabil,
  * damit Nutzer sich darauf verlassen können (kein Neu-Mischen bei jedem Aufruf).
+ *
+ * `weekUsage`: Rezeptverwendung der laufenden Wochenplanung (siehe
+ * getOrGenerateWeekPlan). Wird sie nicht übergeben, wird sie aus den bereits
+ * gespeicherten Tagen derselben Woche gelesen. Ein neu erzeugter Tag trägt
+ * seine Rezepte in `weekUsage` ein; ein bereits gespeicherter Tag ändert sie nicht.
  */
-export async function getOrGenerateDayPlan(profileId: string, date: Date) {
+export async function getOrGenerateDayPlan(profileId: string, date: Date, weekUsage?: RecipeUsage) {
   const day = startOfDay(date);
 
   const existing = await prisma.mealPlanDay.findUnique({
@@ -29,6 +69,8 @@ export async function getOrGenerateDayPlan(profileId: string, date: Date) {
     include: { items: { include: { recipe: true }, orderBy: { time: "asc" } } },
   });
   if (existing) return existing;
+
+  const usage = weekUsage ?? (await loadWeekUsage(profileId, day));
 
   const profile = await prisma.profile.findUniqueOrThrow({
     where: { id: profileId },
@@ -101,43 +143,61 @@ export async function getOrGenerateDayPlan(profileId: string, date: Date) {
     }
   }
 
-  const usedRecipeIds = new Set<string>();
-  const chosenItems: {
-    slot: MealSlot;
-    time: string;
-    recipeId: string;
-    recipe: RecipeCandidate;
-    priorScale: number;
-  }[] = [];
+  const pickDay = (weekUsage?: RecipeUsage) => {
+    const usedRecipeIds = new Set<string>();
+    const items: {
+      slot: MealSlot;
+      time: string;
+      recipeId: string;
+      recipe: RecipeCandidate;
+      priorScale: number;
+    }[] = [];
 
-  for (const slotTarget of slotTargets) {
-    const candidates = candidatesBySlot.get(slotTarget.slot) ?? [];
-    const chosen = selectRecipeForSlot(
-      candidates,
-      slotTarget,
-      likedLabels,
-      dislikedLabels,
-      usedRecipeIds,
+    for (const slotTarget of slotTargets) {
+      const candidates = candidatesBySlot.get(slotTarget.slot) ?? [];
+      const chosen = selectRecipeForSlot(
+        candidates,
+        slotTarget,
+        likedLabels,
+        dislikedLabels,
+        usedRecipeIds,
+        weekUsage,
+      );
+      if (!chosen) continue;
+
+      usedRecipeIds.add(chosen.id);
+      items.push({
+        slot: slotTarget.slot,
+        time: slotTarget.time,
+        recipeId: chosen.id,
+        recipe: chosen,
+        priorScale: computePortionScale(slotTarget, chosen),
+      });
+    }
+
+    // Alle gewählten Rezepte gemeinsam auf die Tagesziele skalieren, statt jede
+    // Mahlzeit isoliert nur auf ihr Kalorien-Teilziel zu bringen. So treffen am
+    // Ende auch Protein/Carbs/Fett in Summe die Tagesziele, nicht nur die Kalorien.
+    const scales = computeJointPortionScales(
+      targets,
+      items.map((item) => ({ recipe: item.recipe, priorScale: item.priorScale })),
     );
-    if (!chosen) continue;
+    const deviation = dayMacroDeviation(
+      targets,
+      items.map((item, i) => ({ recipe: item.recipe, scale: scales[i] ?? item.priorScale })),
+    );
+    return { items, scales, deviation };
+  };
 
-    usedRecipeIds.add(chosen.id);
-    chosenItems.push({
-      slot: slotTarget.slot,
-      time: slotTarget.time,
-      recipeId: chosen.id,
-      recipe: chosen,
-      priorScale: computePortionScale(slotTarget, chosen),
-    });
+  // Variety ist nur eine Präferenz: Trifft der Tag mit den abwechslungsreicheren
+  // Rezepten die Tagesziele spürbar schlechter als ohne Wochenabschlag (z.B. weil
+  // sich mehrere sehr proteinreiche Gerichte stapeln), gilt die Auswahl ohne Abschlag.
+  let picked = pickDay(usage);
+  if (usage.size > 0) {
+    const plain = pickDay();
+    if (picked.deviation > plain.deviation + MAX_VARIETY_ACCURACY_LOSS) picked = plain;
   }
-
-  // Alle gewählten Rezepte gemeinsam auf die Tagesziele skalieren, statt jede
-  // Mahlzeit isoliert nur auf ihr Kalorien-Teilziel zu bringen. So treffen am
-  // Ende auch Protein/Carbs/Fett in Summe die Tagesziele, nicht nur die Kalorien.
-  const jointScales = computeJointPortionScales(
-    targets,
-    chosenItems.map((item) => ({ recipe: item.recipe, priorScale: item.priorScale })),
-  );
+  const { items: chosenItems, scales: jointScales } = picked;
 
   const created = await prisma.mealPlanDay.create({
     data: {
@@ -159,5 +219,37 @@ export async function getOrGenerateDayPlan(profileId: string, date: Date) {
     include: { items: { include: { recipe: true }, orderBy: { time: "asc" } } },
   });
 
+  addUsage(usage, created.items.map((item) => item.recipeId));
   return created;
+}
+
+/**
+ * Die sieben Tage ab `weekStart` (Montag) in Reihenfolge. Fehlende Tage werden
+ * nacheinander erzeugt (nicht parallel), weil jeder Tag wissen muss, welche
+ * Rezepte die Tage davor gewählt haben. Bereits gespeicherte Tage bleiben
+ * unverändert, zählen aber ebenfalls für die Rezeptverwendung, auch wenn sie
+ * später in der Woche liegen als ein neu erzeugter Tag.
+ */
+export async function getOrGenerateWeekPlan(profileId: string, weekStart: Date) {
+  const monday = startOfDay(weekStart);
+  const dates = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    return d;
+  });
+
+  const stored = await prisma.mealPlanDay.findMany({
+    where: { profileId, date: { gte: dates[0], lte: dates[6] } },
+    include: { items: { include: { recipe: true }, orderBy: { time: "asc" } } },
+  });
+  const storedByTime = new Map(stored.map((d) => [d.date.getTime(), d]));
+
+  const usage: RecipeUsage = new Map();
+  for (const d of stored) addUsage(usage, d.items.map((item) => item.recipeId));
+
+  const plans = [];
+  for (const date of dates) {
+    plans.push(storedByTime.get(date.getTime()) ?? (await getOrGenerateDayPlan(profileId, date, usage)));
+  }
+  return plans;
 }

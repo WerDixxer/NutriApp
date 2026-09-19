@@ -26,7 +26,7 @@ export function TagInput({
   }
 
   return (
-    <div className="flex min-h-[48px] flex-wrap items-center gap-2 rounded-2xl bg-bg-dim px-3 py-2">
+    <div className="flex min-h-[48px] flex-wrap items-center gap-2 rounded-[var(--radius-md)] bg-bg-dim px-3 py-2">
       <AnimatePresence initial={false}>
         {values.map((v) => (
           <motion.span

@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { ChefHat, Clock, Flame, Users, X } from "lucide-react";
+import { ChefHat, Clock, Flame, TrendingUp, Users, X } from "lucide-react";
 import { approxGrams, approxKcal } from "@/lib/format";
+import { useDialogBehavior } from "@/components/ui/useDialogBehavior";
 
 export interface RecipeDetail {
   id: string;
@@ -24,55 +25,30 @@ export interface RecipeDetail {
   /** Falls die Portion für ein Tagesziel skaliert wurde (1 = Originalrezept). */
   portionMultiplier?: number;
   tags?: string[];
+  /** Gesetzt, wenn Zutaten durch Lieblingslebensmittel des Nutzers ersetzt wurden. */
+  personalization?: { swaps: { from: string; to: string }[] };
 }
 
-const EMOJI_RULES: [RegExp, string][] = [
-  [/gurke/i, "🥒"],
-  [/udon|nudel|pasta|pad.?thai/i, "🍜"],
-  [/hüttenkäse|cottage/i, "🧀"],
-  [/feta/i, "🫓"],
-  [/chia|pudding/i, "🍮"],
-  [/dumpling|reispapier/i, "🥟"],
-  [/porridge|hafer/i, "🥣"],
-  [/rührei|ei|omelett/i, "🍳"],
-  [/tofu/i, "🌱"],
-  [/skyr|joghurt/i, "🍨"],
-  [/hähnchen|chicken|pute/i, "🍗"],
-  [/lachs|fisch|salmon|garnelen/i, "🐟"],
-  [/linsen|curry/i, "🍛"],
-  [/steak|rind/i, "🥩"],
-  [/falafel|hummus/i, "🧆"],
-  [/chili|bohnen/i, "🌶️"],
-  [/shake|protein/i, "🥤"],
-  [/ananas/i, "🍍"],
-  [/studentenfutter|nüsse|trail/i, "🥜"],
-  [/reiswaffel/i, "🍘"],
-  [/banane/i, "🍌"],
-  [/toast|brot/i, "🍞"],
-  [/zucchini|pesto/i, "🍝"],
-  [/honig/i, "🍯"],
+/**
+ * Kein Food-Emoji, kein Icon-Set-Import: eine ruhige, markenfarbene Kachel
+ * mit dem Anfangsbuchstaben des Gerichts. Vermeidet literale
+ * Essens-Illustrationen (Pfanne/Ei/Burger/...), die die App wie eine
+ * generische Meal-Planning-App wirken lassen - siehe Kapitel-Vorgabe.
+ * Tonwahl deterministisch (Hash über den Namen), aber ausschließlich aus
+ * den bestehenden, gedeckten Design-Tokens - kein Regenbogen-Pastell.
+ */
+const THUMB_TONES = [
+  "var(--color-primary-soft)",
+  "var(--color-warn-soft)",
+  "var(--color-danger-soft)",
+  "var(--color-accent-soft)",
+  "var(--color-bg-dim)",
 ];
 
-function emojiFor(name: string, imageQuery: string): string {
-  const haystack = `${name} ${imageQuery}`;
-  for (const [pattern, emoji] of EMOJI_RULES) {
-    if (pattern.test(haystack)) return emoji;
-  }
-  return "🍽️";
-}
-
-const GRADIENTS = [
-  "from-emerald-100 to-lime-50",
-  "from-orange-100 to-rose-50",
-  "from-sky-100 to-emerald-50",
-  "from-violet-100 to-indigo-50",
-  "from-amber-100 to-orange-50",
-];
-
-function gradientFor(name: string): string {
+function toneFor(name: string): string {
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
-  return GRADIENTS[hash % GRADIENTS.length];
+  return THUMB_TONES[hash % THUMB_TONES.length];
 }
 
 function MacroChip({ label, value, color }: { label: string; value: number; color: string }) {
@@ -88,43 +64,66 @@ function MacroChip({ label, value, color }: { label: string; value: number; colo
 }
 
 export function RecipeThumb({ recipe, className = "" }: { recipe: RecipeDetail; className?: string }) {
+  const initial = recipe.name.trim().charAt(0).toUpperCase() || "?";
   return (
     <div
-      className={`flex items-center justify-center rounded-lg bg-gradient-to-br text-3xl ${gradientFor(
-        recipe.name,
-      )} ${className}`}
+      className={`font-display flex items-center justify-center rounded-lg text-ink ${className}`}
+      style={{ background: toneFor(recipe.name) }}
     >
-      {emojiFor(recipe.name, recipe.imageQuery)}
+      {initial}
     </div>
   );
 }
 
-export function RecipeDetailModal({
+/**
+ * Die Dialog-Fläche selbst, gesteuert von außen: `recipe` gesetzt = offen,
+ * `null` = geschlossen. So kann eine Liste mit vielen Mahlzeiten EINEN Dialog
+ * teilen, statt für jede Zeile eine eigene Instanz einzuhängen. Escape,
+ * Fokusfalle, Fokus-Rückgabe und das Bottom-Sheet/Dialog-Verhalten sind
+ * dieselben wie zuvor in RecipeDetailModal.
+ *
+ * `returnFocusRef`: Element, das beim Schließen den Fokus zurückbekommt (z.B.
+ * die angeklickte Zeile, manche Browser fokussieren Buttons beim Klick nicht).
+ * Ohne Angabe geht der Fokus an das Element zurück, das beim Öffnen fokussiert war.
+ */
+export function RecipeDetailDialog({
   recipe,
-  trigger,
+  onClose,
+  returnFocusRef,
 }: {
-  recipe: RecipeDetail;
-  trigger?: React.ReactNode;
+  recipe: RecipeDetail | null;
+  onClose: () => void;
+  returnFocusRef?: React.RefObject<HTMLElement | null>;
 }) {
-  const [open, setOpen] = useState(false);
+  const open = recipe !== null;
   const [mounted, setMounted] = useState(false);
+  const titleId = useId();
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   // Portal braucht `document.body`, das während SSR nicht existiert. Flag wird
   // erst nach dem Hydration-Mount gesetzt, um einen Markup-Mismatch zu vermeiden.
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => setMounted(true), []);
 
+  // Escape, Fokusfalle und Fokus-Rückgabe: gemeinsam mit dem Wocheneinkauf-Sheet.
+  useDialogBehavior({ open, onClose, panelRef, initialFocusRef: closeButtonRef, returnFocusRef });
+
   const modal = (
       <AnimatePresence>
-        {open && (
+        {recipe && (
           <motion.div
             className="fixed inset-0 z-50 flex items-end justify-center bg-ink/50 p-0 sm:items-center sm:p-6"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={() => setOpen(false)}
+            onClick={onClose}
           >
             <motion.div
-              className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-t-xl border border-border bg-white sm:rounded-xl sm:shadow-hard"
+              ref={panelRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby={titleId}
+              className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-t-[var(--radius-lg)] border border-border bg-white sm:rounded-[var(--radius-lg)] sm:shadow-hard"
               initial={{ y: 40, opacity: 0, scale: 0.98 }}
               animate={{ y: 0, opacity: 1, scale: 1 }}
               exit={{ y: 20, opacity: 0, scale: 0.98 }}
@@ -132,27 +131,28 @@ export function RecipeDetailModal({
               onClick={(e) => e.stopPropagation()}
             >
               <div
-                className={`relative flex h-32 items-center justify-center border-b border-border bg-gradient-to-br text-5xl ${gradientFor(
-                  recipe.name,
-                )}`}
+                className="relative flex h-28 items-center justify-center border-b border-border"
+                style={{ background: toneFor(recipe.name) }}
               >
-                {emojiFor(recipe.name, recipe.imageQuery)}
+                <span className="font-display text-4xl text-ink/70">{recipe.name.trim().charAt(0).toUpperCase()}</span>
                 <button
-                  onClick={() => setOpen(false)}
-                  className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full border border-border bg-white text-ink-soft hover:text-ink"
+                  ref={closeButtonRef}
+                  onClick={onClose}
+                  aria-label="Schließen"
+                  className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full border border-border bg-white text-ink-soft transition-colors duration-[var(--duration-fast)] hover:text-ink"
                 >
                   <X className="h-4 w-4" />
                 </button>
                 {recipe.isTrending && (
                   <span className="absolute left-4 top-4 flex items-center gap-1 rounded-full border border-accent/30 bg-white px-2.5 py-1 text-xs font-semibold text-accent">
-                    <span className="animate-flame">🔥</span> Trend
+                    <TrendingUp className="h-3 w-3" /> Trend
                   </span>
                 )}
               </div>
 
               <div className="flex flex-col gap-5 p-6">
                 <div>
-                  <h2 className="font-display text-2xl font-bold text-ink">{recipe.name}</h2>
+                  <h2 id={titleId} className="font-display text-2xl font-bold text-ink">{recipe.name}</h2>
                   <p className="mt-1 text-sm text-ink-soft">{recipe.description}</p>
                   {recipe.trendSource && (
                     <p className="mt-1 text-xs font-bold text-accent">
@@ -187,12 +187,20 @@ export function RecipeDetailModal({
                   </p>
                 )}
 
+                {recipe.personalization && (
+                  <p className="rounded-md border border-primary/25 bg-primary-soft px-3 py-2 text-xs font-medium text-primary-dark">
+                    Für dich angepasst:{" "}
+                    {recipe.personalization.swaps.map((s) => `${s.to} statt ${s.from}`).join(", ")}. Nährwerte
+                    sind mit den neuen Zutaten berechnet.
+                  </p>
+                )}
+
                 <div>
                   <h3 className="font-display mb-2 text-base font-bold text-ink">Zutaten</h3>
                   <ul className="flex flex-col gap-1.5">
                     {recipe.ingredients.map((ing, i) => (
                       <li key={i} className="flex items-start gap-2 text-sm text-ink-soft">
-                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+                        <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-ink-faint" />
                         {ing}
                       </li>
                     ))}
@@ -219,11 +227,27 @@ export function RecipeDetailModal({
       </AnimatePresence>
   );
 
+  return mounted ? createPortal(modal, document.body) : null;
+}
+
+/** Ein Rezept mit eigenem Trigger-Button und eigenem Dialog, für Stellen mit genau einem Rezept. */
+export function RecipeDetailModal({
+  recipe,
+  trigger,
+}: {
+  recipe: RecipeDetail;
+  trigger?: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+
   return (
     <>
       <button
+        ref={triggerRef}
         onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3.5 py-1.5 text-xs font-semibold text-ink transition hover:border-primary hover:text-primary-dark"
+        className="inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-border bg-white px-3.5 py-1.5 text-xs font-semibold text-ink transition-colors duration-[var(--duration-fast)] hover:border-primary hover:text-primary-dark"
       >
         {trigger ?? (
           <>
@@ -231,7 +255,7 @@ export function RecipeDetailModal({
           </>
         )}
       </button>
-      {mounted && createPortal(modal, document.body)}
+      <RecipeDetailDialog recipe={open ? recipe : null} onClose={close} returnFocusRef={triggerRef} />
     </>
   );
 }

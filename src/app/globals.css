@@ -1,37 +1,117 @@
 @import "tailwindcss";
 
+/*
+ * Design tokens v3. Single source of truth for color/radius/shadow/glass/
+ * motion/surface. Spacing follows Tailwind's default scale directly (no
+ * parallel spacing tokens) - one consistent system, not two.
+ *
+ * Palette: warme Neutrale (statt kühlem Grau) + gedecktes Waldgrün als
+ * einzige Identitätsfarbe - passend zu Ernährung/Frische/Nachhaltigkeit,
+ * ohne dass die App insgesamt grün wirkt (Grün bleibt selektiv: Nav-Akzent,
+ * primäre Interaktionen, Ring, ausgewählte Zustände).
+ *
+ * Farb-Rollen (bewusst getrennt, damit keine Farbe mehrere widersprüchliche
+ * Bedeutungen trägt):
+ * - brand (= --color-primary): die EINE Identitätsfarbe der App (Waldgrün).
+ * - success/warn/danger: reine Status-Farben (Budget im Rahmen, Vorrat läuft
+ *   ab, Fehlertext). Werden NIE dekorativ eingesetzt. danger ist jetzt eine
+ *   eigene, von brand komplett unabhängige Farbe (vorher teilte sich brand
+ *   mit danger denselben Rotton - das ist mit Grün als Brand obsolet).
+ * - protein/carbs/fat: reine Datenvisualisierungs-Farben (Terrakotta/Sand/
+ *   Stahlblau), bewusst NICHT grün, damit sie nie mit der Markenfarbe
+ *   verwechselt werden - ausschließlich in Makro-Kontexten (Balken, Ring-
+ *   Chips), nie für UI-Chrome (Buttons, Nav, Karten).
+ */
 :root {
-  --color-bg: #ffffff;
-  --color-bg-dim: #f5f5f7;
-  --color-ink: #1d1d1f;
-  --color-ink-soft: #6e6e73;
-  --color-border: #d2d2d7;
+  --color-bg: #f7f5ef;
+  --color-bg-dim: #ebe8df;
+  --color-bg-dim-hover: #e0dccd;
+  --color-ink: #1a1c17;
+  --color-ink-soft: #64645a;
+  --color-ink-faint: #97968a;
+  --color-border: #ddd9cc;
+  --color-border-strong: #c8c3af;
 
-  /* Primary = Protein-Ring-Farbe, gleichzeitig die einzige "laute" Akzentfarbe der App. */
-  --color-primary: #ff3b30;
-  --color-primary-dark: #d92c22;
+  /* Inverse Oberfläche: für spürbar höheren Kontrast an wenigen, bewusst
+     gewählten Stellen (Navigation, Hero-Module). Bewusst kein neutrales
+     Schwarz, sondern ein Waldgrün-getöntes Anthrazit - bindet die dunklen
+     Flächen an dieselbe Markenidentität wie --color-primary. */
+  --color-ink-dark: #14201a;
+  --color-surface-inverse: #172219;
+  --color-surface-inverse-soft: #223026;
+  --color-on-inverse: #f5f4ee;
+  --color-on-inverse-soft: #a7ac9d;
+
+  /* Brand = einzige Identitätsfarbe der App: gedecktes Waldgrün. */
+  --color-primary: #21483b;
+  --color-primary-dark: #16332a;
   --color-primary-foreground: #ffffff;
-  --color-primary-soft: #ffe4e1;
+  --color-primary-soft: #dfe6e0;
 
-  /* Accent = Blau, für Info/Training-Kontext und die Fett-Ringfarbe. */
-  --color-accent: #0a84ff;
-  --color-accent-soft: #e3f1ff;
+  /* Accent = hellere Salbei-Stufe derselben Familie (keine zweite, fremde
+     Farbe) - für sekundäre Betonung/Info, nie als Fehlerfarbe. */
+  --color-accent: #4c6d58;
+  --color-accent-soft: #e4eae1;
 
-  --color-ink-dark: #111113;
+  /* Status: rein funktional, nie dekorativ, jeweils eigenständig von brand. */
+  --color-success: #3f6b4e;
+  --color-success-soft: #e1ece3;
+  --color-warn: #8a6423;
+  --color-warn-soft: #f3e8d2;
+  --color-warn-dot: #c6a66a;
+  --color-danger: #a8432b;
+  --color-danger-soft: #f3e0d6;
 
-  --color-protein: #ff3b30;
-  --color-carbs: #30d158;
-  --color-fat: #0a84ff;
+  /* Makro-Datenfarben: bewusst außerhalb der Grün-Familie. */
+  --color-protein: #b5573c;
+  --color-carbs: #c6a66a;
+  --color-fat: #4f6d8c;
 
-  --font-sans: var(--font-inter);
+  --font-sans: var(--font-jakarta);
+  --font-display: var(--font-sans);
+  --font-mono: var(--font-mono-tech);
+
+  /* Formsprache: bewusst gemischt statt durchgehend weich - sharp für
+     technische/Daten-Elemente, sm/md/lg für Container, full für Pills. */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-full: 999px;
+
+  /* Schatten: extrem zurückhaltend, nie riesig. */
+  --shadow-soft: 0 1px 2px rgba(20, 20, 22, 0.05), 0 10px 24px -16px rgba(20, 20, 22, 0.22);
+  --shadow-lift: 0 2px 4px rgba(20, 20, 22, 0.06), 0 20px 40px -20px rgba(20, 20, 22, 0.28);
+
+  /* Glas: hell (Filter/Panels auf hellem Grund) und dunkel (Navigation). */
+  --glass-bg: rgba(251, 251, 250, 0.78);
+  --glass-border: rgba(20, 20, 22, 0.07);
+  --glass-blur: 20px;
+  --glass-dark-bg: rgba(26, 26, 29, 0.82);
+  --glass-dark-border: rgba(255, 255, 255, 0.08);
+
+  /* Bewegung: eine Timing-Kurve, drei Dauerstufen. */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 120ms;
+  --duration-base: 220ms;
+  --duration-slow: 420ms;
 }
 
 @theme inline {
   --color-bg: var(--color-bg);
   --color-bg-dim: var(--color-bg-dim);
+  --color-bg-dim-hover: var(--color-bg-dim-hover);
   --color-ink: var(--color-ink);
   --color-ink-soft: var(--color-ink-soft);
+  --color-ink-faint: var(--color-ink-faint);
   --color-border: var(--color-border);
+  --color-border-strong: var(--color-border-strong);
+
+  --color-ink-dark: var(--color-ink-dark);
+  --color-surface-inverse: var(--color-surface-inverse);
+  --color-surface-inverse-soft: var(--color-surface-inverse-soft);
+  --color-on-inverse: var(--color-on-inverse);
+  --color-on-inverse-soft: var(--color-on-inverse-soft);
 
   --color-primary: var(--color-primary);
   --color-primary-dark: var(--color-primary-dark);
@@ -41,49 +121,179 @@
   --color-accent: var(--color-accent);
   --color-accent-soft: var(--color-accent-soft);
 
-  --color-ink-dark: var(--color-ink-dark);
+  --color-success: var(--color-success);
+  --color-success-soft: var(--color-success-soft);
+  --color-warn: var(--color-warn);
+  --color-warn-soft: var(--color-warn-soft);
+  --color-danger: var(--color-danger);
+  --color-danger-soft: var(--color-danger-soft);
 
   --color-protein: var(--color-protein);
   --color-carbs: var(--color-carbs);
   --color-fat: var(--color-fat);
 
   --font-sans: var(--font-sans);
+  --font-display: var(--font-display);
+  --font-mono: var(--font-mono);
+
+  --radius-xs: var(--radius-xs);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-full: var(--radius-full);
 }
 
 body {
   background: var(--color-bg);
   color: var(--color-ink);
-  font-family: var(--font-sans), -apple-system, "Helvetica Neue", sans-serif;
+  font-family: var(--font-sans), -apple-system, "Segoe UI", sans-serif;
   letter-spacing: -0.01em;
 }
 
-/* Eine einzige Schriftfamilie, nur über Gewicht/Tracking differenziert: kein
-   Display-vs-Body-Kontrast. .font-display markiert die großen, fest
-   gewichteten Headline-Momente (enges Tracking, extra-fett). */
+/*
+ * WICHTIG: alle Klassen unten stehen bewusst in `@layer utilities`, nicht
+ * lose im Stylesheet. Tailwind v4 legt seine eigenen (auch responsiven,
+ * z.B. `md:hidden`) Utilities in benannte Cascade-Layer. Nach Spezifikation
+ * verlieren GELAYERTE Regeln IMMER gegen ungelayerte Regeln, unabhängig von
+ * Reihenfolge/Spezifität. Eine eigene Klasse wie `.rail { display: flex }`
+ * außerhalb eines Layers hätte `md:hidden` also selbst dann überstimmt, wenn
+ * `md:hidden` textuell danach im Markup steht - genau das hat die mobile
+ * Navigation kaputt gemacht (`rail` gewann gegen `md:hidden`). Innerhalb von
+ * `@layer utilities` konkurrieren eigene Klassen korrekt mit Tailwinds
+ * eigenen Utilities.
+ */
+@layer utilities {
+
+/* ---- Typografische Skala ----
+   Eine Familie (Plus Jakarta Sans) für die gesamte App - Hierarchie kommt
+   aus Größe/Gewicht, nicht aus wechselnden Schriftfamilien. Das hält die
+   App als EIN Produkt lesbar, nicht als Dashboard mit angeflanschten
+   Zusatzschriften. IBM Plex Mono bleibt die einzige zweite Familie, streng
+   auf `.text-tech` (kleine technische Datenpunkte) begrenzt. */
+
+.text-display {
+  font-family: var(--font-display);
+  font-size: 56px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.text-h1 {
+  font-family: var(--font-display);
+  font-size: 34px;
+  line-height: 1.08;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.text-h2 {
+  font-family: var(--font-display);
+  font-size: 21px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.text-h3 {
+  font-size: 16px;
+  line-height: 1.3;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.text-body {
+  font-size: 15px;
+  line-height: 1.55;
+  font-weight: 400;
+}
+
+.text-label {
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Kleine "technische" Datenpunkte (Tageszähler, Prozentwerte, Zeitstempel) -
+   eigene, dezente Schriftfamilie statt Dekoration. Sparsam einsetzen. */
+.text-tech {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
 .font-display {
-  font-weight: 800;
-  letter-spacing: -0.03em;
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .num {
   font-variant-numeric: tabular-nums;
 }
 
-/* Sehr zurückhaltende Erhöhung, nur für tatsächlich schwebende Ebenen
-   (Modal-Overlay), nicht für gewöhnliche Listenzeilen/Abschnitte. */
+/* Nur für tatsächlich schwebende Ebenen (Modal-Panel), nicht für Karten. */
 .shadow-hard {
-  box-shadow: 0 24px 48px -24px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 24px 48px -24px rgba(0, 0, 0, 0.22);
 }
 
-@keyframes flame-pulse {
-  0%,
-  100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.08);
-  }
+.shadow-soft {
+  box-shadow: var(--shadow-soft);
 }
+
+.shadow-lift {
+  box-shadow: var(--shadow-lift);
+}
+
+/* Glas-Oberflächen: ausschließlich für Navigation/Overlays/Filterleisten,
+   nie für gewöhnliche Karten. .glass-dark ist reserviert für die
+   Hauptnavigation (siehe Nav.tsx) - der auffälligste Kontrast-Moment der App. */
+.glass {
+  background: var(--glass-bg);
+  border-color: var(--glass-border);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+}
+
+.glass-dark {
+  background: var(--glass-dark-bg);
+  border-color: var(--glass-dark-border);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  color: var(--color-on-inverse);
+}
+
+/* Horizontale Leisten (Dashboard-Mahlzeiten, Tages-Rail, Filter): native
+   Scroll-Snap statt JS-Karussell, funktioniert mit Maus/Trackpad/Touch
+   gleichermaßen. Scrollbar dezent ausgeblendet, Funktion bleibt erhalten.
+   Setzt bewusst KEIN `display` - das übernimmt der Aufrufer selbst über
+   normale Tailwind-Klassen (`flex`/`md:hidden`/...). Ein `display` hier
+   würde mit Tailwinds eigenen (auch responsiven) Display-Utilities um
+   dieselbe Cascade-Layer-Position konkurrieren und - je nach Ladereihenfolge
+   - responsive Klassen wie `md:hidden` unsichtbar überstimmen können. */
+.rail {
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.rail::-webkit-scrollbar {
+  display: none;
+}
+.rail > * {
+  scroll-snap-align: start;
+}
+
+/* Feine technische Trennlinie, dünner als border-border - für Messwert-
+   artige Unterteilungen innerhalb eines Blocks (z.B. Ring-Achsen). */
+.hairline {
+  box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+} /* Ende @layer utilities (Klassen) - @keyframes bleiben bewusst außerhalb,
+     Animationsnamen sind global und layer-unabhängig. */
 
 @keyframes fade-in-up {
   from {
@@ -96,16 +306,76 @@ body {
   }
 }
 
-.animate-flame {
-  animation: flame-pulse 2s ease-in-out infinite;
-  display: inline-block;
+@keyframes typing-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
 }
 
+@layer utilities {
+.typing-dot {
+  animation: typing-dot 1.1s ease-in-out infinite;
+}
+}
+
+@keyframes check-pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.12);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@layer utilities {
 .animate-fade-in-up {
   animation: fade-in-up 0.5s ease-out both;
+}
+
+.animate-check-pop {
+  animation: check-pop var(--duration-slow) var(--ease-out) both;
+}
 }
 
 ::selection {
   background: var(--color-primary-soft);
   color: var(--color-primary-dark);
+}
+
+/* Sichtbarer, konsistenter Fokus-Zustand für Tastaturnutzung - ersetzt den
+   Browser-Default punktuell dort, wo Tailwinds outline-none verwendet wird. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in-up,
+  .animate-check-pop,
+  .typing-dot {
+    animation: none !important;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .rail {
+    scroll-snap-type: none;
+  }
 }

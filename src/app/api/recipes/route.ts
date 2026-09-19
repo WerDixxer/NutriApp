@@ -50,6 +50,7 @@ export async function POST(request: Request) {
       ingredients: JSON.stringify(body.ingredients),
       instructions: JSON.stringify(body.instructions),
       isCustom: true,
+      sourceType: "user",
       ownerProfileId: profile.id,
     },
   });

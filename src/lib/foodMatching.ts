@@ -20,6 +20,18 @@ export function ingredientListIncludes(ingredients: string[], term: string): boo
   return ingredients.some((i) => i.toLowerCase().includes(needle));
 }
 
+/**
+ * 0..1-Nähe-Score zwischen einem Zielwert und einem tatsächlichen Wert (1 =
+ * exakt getroffen, 0 = mindestens so weit daneben wie der Zielwert selbst).
+ * Gemeinsamer Baustein für Decision Engine UND Meal Planner (Kapitel 10),
+ * siehe jeweilige scoreCalories/scoreProtein etc.
+ */
+export function closeness(target: number, actual: number): number {
+  if (target <= 0) return actual <= 0 ? 1 : 0;
+  const diff = Math.abs(target - actual) / target;
+  return Math.max(0, 1 - diff);
+}
+
 /** Anteil der Kalorien, die aus Protein/Carbs/Fett stammen (Makro-"Fingerabdruck"). */
 export function macroProfile(kcal: number, proteinG: number, carbsG: number, fatG: number) {
   const safeKcal = Math.max(kcal, 1);

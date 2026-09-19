@@ -4,45 +4,24 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 
 /**
- * Der visuelle Kern der App: "Entscheide für mich" als eigenständiges,
- * ring-basiertes Element (nicht als Button-in-einer-Card). Führt zum Coach
- * und löst dort automatisch die Entscheidung aus (siehe AssistantChat: `?ask=decide`).
+ * "Entscheide für mich" als kompakte CTA-Karte, bewusst NICHT als Ring:
+ * ein zweiter, ring-förmiger Fortschrittsindikator direkt neben dem echten
+ * Kalorien-Ring (CalorieRing) hätte suggeriert, hier gäbe es einen zweiten
+ * Messwert - gab es nie (der alte Ring zeigte einen fest codierten, nicht
+ * datengebundenen Wert). Gleiches Ziel/Verhalten wie zuvor: Link zum Coach,
+ * der dort automatisch die Entscheidung auslöst (`?ask=decide`). Bewusst
+ * ohne Icon - die eine prominente, solide Aktion der Seite, keine
+ * "AI-Feature-Karte".
  */
-export function DecideRing({ size = 148 }: { size?: number }) {
-  const strokeWidth = 10;
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
-
+export function DecideRing() {
   return (
     <Link href="/assistant?ask=decide" className="group inline-block">
       <motion.div
-        whileHover={{ scale: 1.03 }}
-        whileTap={{ scale: 0.97 }}
-        className="relative flex items-center justify-center"
-        style={{ width: size, height: size }}
+        whileHover={{ y: -1 }}
+        whileTap={{ scale: 0.98 }}
+        className="flex h-11 items-center rounded-full bg-ink px-5 text-white transition-colors duration-[var(--duration-fast)] group-hover:bg-black"
       >
-        <svg width={size} height={size} className="-rotate-90">
-          <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="var(--color-bg-dim)" strokeWidth={strokeWidth} />
-          <circle
-            cx={size / 2}
-            cy={size / 2}
-            r={radius}
-            fill="none"
-            stroke="var(--color-primary)"
-            strokeWidth={strokeWidth}
-            strokeLinecap="round"
-            strokeDasharray={circumference}
-            strokeDashoffset={circumference * 0.22}
-          />
-        </svg>
-        <div className="absolute flex flex-col items-center text-center">
-          <span className="text-[15px] font-bold leading-tight text-ink">
-            Entscheide
-            <br />
-            für mich
-          </span>
-          <span className="mt-1 text-[10.5px] font-semibold text-ink-soft">1 Klick</span>
-        </div>
+        <span className="text-[14px] font-semibold">Entscheide für mich</span>
       </motion.div>
     </Link>
   );

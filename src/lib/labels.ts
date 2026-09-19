@@ -66,3 +66,21 @@ export const EXPIRATION_TYPE_LABELS: Record<string, string> = {
   ESTIMATED: "geschätzt",
   UNKNOWN: "unbekannt",
 };
+
+export const BUDGET_PERIOD_LABELS: Record<string, string> = {
+  WEEK: "Woche",
+  MONTH: "Monat",
+};
+
+export const FOOD_EXPENSE_CATEGORY_LABELS: Record<string, string> = {
+  GROCERIES: "Lebensmitteleinkauf",
+  RESTAURANT: "Restaurant",
+  TAKEAWAY: "Takeaway/Lieferung",
+  OTHER: "Sonstiges",
+};
+
+export const BUDGET_STATUS_LABELS: Record<string, string> = {
+  UNDER_BUDGET: "Im Rahmen",
+  NEAR_LIMIT: "Nähert sich dem Limit",
+  OVER_BUDGET: "Über dem Budget",
+};

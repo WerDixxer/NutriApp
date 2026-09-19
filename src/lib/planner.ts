@@ -168,11 +168,32 @@ export interface RecipeCandidate {
   isTrending: boolean;
 }
 
+/**
+ * Weicher Wiederholungsabschlag innerhalb EINER Wochenplanung (siehe
+ * generateMealPlan.ts:getOrGenerateWeekPlan): -0.1 je bereits erfolgter
+ * Verwendung, gedeckelt bei 3 Verwendungen (max. -0.3).
+ *
+ * Kalibriert an der Skala von scoreRecipe (Makro-Abweichung 0 bis ca. -0.7, liked
+ * +0.5, trending +0.2). In den echten Daten liegen die besten Kandidaten eines
+ * Slots meist 0.02 bis 0.15 auseinander, klar schlechtere Rezepte 0.3 und mehr.
+ * 0.1 reicht also, um zwischen fast gleich passenden Rezepten zu rotieren, ohne
+ * ein deutlich schlechter passendes Rezept nach vorn zu holen. Der Deckel liegt
+ * unter dem liked-Bonus: ein Lieblingsrezept bleibt auch nach drei Verwendungen
+ * vor einem sonst gleich passenden unbeliebten. Nie ein Ausschluss.
+ */
+export const REPETITION_PENALTY_PER_USE = 0.1;
+export const REPETITION_PENALTY_MAX_USES = 3;
+
+export function repetitionPenalty(uses: number): number {
+  return REPETITION_PENALTY_PER_USE * Math.min(Math.max(uses, 0), REPETITION_PENALTY_MAX_USES);
+}
+
 function scoreRecipe(
   recipe: RecipeCandidate,
   target: SlotTarget,
   likedFoods: string[],
   dislikedFoods: string[],
+  uses: number,
 ): number | null {
   const lowerIngredients = recipe.ingredients.map((i) => i.toLowerCase());
   const isDisliked = dislikedFoods.some((d) =>
@@ -201,23 +222,31 @@ function scoreRecipe(
   );
   if (likedMatch) score += 0.5;
   if (recipe.isTrending) score += 0.2;
+  score -= repetitionPenalty(uses);
 
   return score;
 }
 
-/** Wählt das beste Rezept für einen Slot; vermeidet kürzlich verwendete Rezepte. */
+/**
+ * Wählt das beste Rezept für einen Slot. `excludeIds` schließt die bereits
+ * gewählten Rezepte DES TAGES aus (mit Fallback, s.u.). `weekUsage` (Rezept-ID
+ * -> Anzahl bisheriger Verwendungen in dieser Wochenplanung) wirkt nur als
+ * weicher Abschlag auf den Score, siehe repetitionPenalty(). Ohne `weekUsage`
+ * verhält sich die Auswahl wie zuvor.
+ */
 export function selectRecipeForSlot(
   candidates: RecipeCandidate[],
   target: SlotTarget,
   likedFoods: string[],
   dislikedFoods: string[],
   excludeIds: Set<string>,
+  weekUsage?: ReadonlyMap<string, number>,
 ): RecipeCandidate | null {
   let best: { recipe: RecipeCandidate; score: number } | null = null;
 
   for (const recipe of candidates) {
     if (excludeIds.has(recipe.id)) continue;
-    const score = scoreRecipe(recipe, target, likedFoods, dislikedFoods);
+    const score = scoreRecipe(recipe, target, likedFoods, dislikedFoods, weekUsage?.get(recipe.id) ?? 0);
     if (score === null) continue;
     if (!best || score > best.score) best = { recipe, score };
   }
@@ -225,7 +254,7 @@ export function selectRecipeForSlot(
   // Fallback: falls alle Kandidaten schon benutzt wurden, Wiederholung erlauben.
   if (!best) {
     for (const recipe of candidates) {
-      const score = scoreRecipe(recipe, target, likedFoods, dislikedFoods);
+      const score = scoreRecipe(recipe, target, likedFoods, dislikedFoods, weekUsage?.get(recipe.id) ?? 0);
       if (score === null) continue;
       if (!best || score > best.score) best = { recipe, score };
     }
@@ -349,6 +378,34 @@ export function computeJointPortionScales(
 
   return result.map((v, i) => (Number.isFinite(v) ? v : selected[i].priorScale));
 }
+
+/**
+ * Mittlere relative Abweichung der Tagessumme (Kalorien, Protein, Carbs, Fett)
+ * von den Tageszielen, wenn die Rezepte mit den gegebenen Portionen gegessen
+ * werden. 0 = trifft alle vier Ziele exakt, 0.05 = im Mittel 5 % daneben.
+ */
+export function dayMacroDeviation(
+  dailyTargets: MacroTarget,
+  items: { recipe: RecipeCandidate; scale: number }[],
+): number {
+  let sum = 0;
+  for (const key of MACRO_KEYS) {
+    const total = items.reduce((s, item) => s + item.recipe[key] * item.scale, 0);
+    sum += Math.abs(total - dailyTargets[key]) / Math.max(dailyTargets[key], 1);
+  }
+  return sum / MACRO_KEYS.length;
+}
+
+/**
+ * Wie viel mittlere Tagesabweichung (siehe dayMacroDeviation) die
+ * Wochen-Variety höchstens kosten darf, bevor der Tag ohne Wochenabschlag
+ * gewählt wird. Ohne Abschlag liegt die Abweichung in den echten Daten bei
+ * 1 bis 5 %. Mit dem Abschlag stieg sie bei vier von fünf Profilen um höchstens
+ * ca. 3 Prozentpunkte (Rotation zwischen ähnlichen Rezepten), bei einem Profil
+ * mit Lieblingsgerichten dagegen um über 8 (mehrere sehr proteinreiche Gerichte
+ * an einem Tag, Portionen an der Untergrenze 0.4x). 0.05 trennt beides.
+ */
+export const MAX_VARIETY_ACCURACY_LOSS = 0.05;
 
 /** Einzelne Kalorien-basierte Schätzung, dient als Startwert/Anker für die gemeinsame Lösung oben. */
 export function computePortionScale(target: SlotTarget, recipe: RecipeCandidate): number {

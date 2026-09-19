@@ -10,7 +10,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "db:seed:evidence": "tsx prisma/seedEvidence.ts",
+    "db:seed:recipes": "tsx prisma/seedRecipes.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

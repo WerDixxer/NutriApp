@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Activity, Dumbbell, Salad, Target, Trash2, User, Plus } from "lucide-react";
 import { TagInput } from "@/components/TagInput";
+import { inputClassName } from "@/components/ui/Field";
+import { Button } from "@/components/ui/Button";
 import {
   ACTIVITY_LABELS,
   DIET_LABELS,
@@ -64,8 +66,8 @@ function SectionCard({
       <div className="flex items-center gap-3">
         <Icon className="h-5 w-5 text-primary" />
         <div>
-          <h2 className="font-display text-xl font-semibold text-ink">{title}</h2>
-          {subtitle && <p className="text-xs text-ink-soft">{subtitle}</p>}
+          <h2 className="text-h3 text-ink">{title}</h2>
+          {subtitle && <p className="text-[12px] text-ink-faint">{subtitle}</p>}
         </div>
       </div>
       {children}
@@ -73,8 +75,7 @@ function SectionCard({
   );
 }
 
-const inputClass =
-  "rounded-xl bg-bg-dim px-3 py-2.5 text-sm text-ink outline-none placeholder:text-ink-soft/60";
+const inputClass = inputClassName;
 
 export default function OnboardingForm() {
   const router = useRouter();
@@ -353,7 +354,7 @@ export default function OnboardingForm() {
             values={priorities}
             onChange={setPriorities}
             placeholder="Eingeben + Enter, z.B. günstig, viel Protein…"
-            chipClassName="bg-amber-100 text-amber-700"
+            chipClassName="bg-warn-soft text-warn"
           />
         </Field>
       </SectionCard>
@@ -427,7 +428,7 @@ export default function OnboardingForm() {
                 </Field>
                 <button
                   type="button"
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-ink-soft transition hover:text-primary"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-ink-soft transition-colors duration-[var(--duration-fast)] hover:text-primary"
                   onClick={() => setTrainingSessions((rows) => rows.filter((_, idx) => idx !== i))}
                 >
                   <Trash2 className="h-4 w-4" />
@@ -437,7 +438,7 @@ export default function OnboardingForm() {
           ))}
           <button
             type="button"
-            className="inline-flex w-fit items-center gap-1.5 rounded-full bg-bg-dim px-4 py-2 text-sm font-semibold text-ink transition hover:bg-primary-soft hover:text-primary-dark"
+            className="inline-flex w-fit items-center gap-1.5 rounded-full bg-bg-dim px-4 py-2 text-sm font-semibold text-ink transition-colors duration-[var(--duration-fast)] hover:bg-primary-soft hover:text-primary-dark"
             onClick={() => setTrainingSessions((rows) => [...rows, emptyTraining()])}
           >
             <Plus className="h-4 w-4" /> Einheit hinzufügen
@@ -445,17 +446,12 @@ export default function OnboardingForm() {
         </div>
       </SectionCard>
 
-      {error && <p className="text-sm font-semibold text-primary">{error}</p>}
+      {error && <p className="text-[13.5px] font-semibold text-danger">{error}</p>}
 
-      <motion.button
-        whileTap={{ scale: 0.98 }}
-        type="submit"
-        disabled={submitting}
-        className="inline-flex items-center justify-center gap-2 rounded-full bg-ink px-5 py-3.5 text-sm font-semibold text-white transition hover:bg-black disabled:opacity-50"
-      >
+      <Button type="submit" disabled={submitting}>
         <Activity className="h-4 w-4" />
         {submitting ? "Speichern…" : "Speichern & Plan erstellen"}
-      </motion.button>
+      </Button>
     </form>
   );
 }

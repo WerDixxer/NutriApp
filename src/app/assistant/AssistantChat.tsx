@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { RecipeDetailModal, RecipeThumb, type RecipeDetail } from "@/components/RecipeDetailModal";
+import { Button } from "@/components/ui/Button";
 import { approxGrams, approxKcal } from "@/lib/format";
 
 export interface ChatMessage {
@@ -77,12 +78,12 @@ export default function AssistantChat({ initialMessages }: { initialMessages: Ch
       <div>
         {messages.length === 0 && (
           <div className="flex flex-col gap-3 pb-6">
-            <p className="text-sm font-semibold text-ink-soft">Frag mich zum Beispiel</p>
+            <p className="text-label text-ink-faint">Frag mich zum Beispiel</p>
             {STARTERS.map((s) => (
               <button
                 key={s}
                 onClick={() => send(s)}
-                className="w-fit text-left text-[15px] text-ink underline decoration-border decoration-2 underline-offset-4 hover:text-primary hover:decoration-primary"
+                className="w-fit text-left text-[15px] text-ink underline decoration-border decoration-2 underline-offset-4 transition-colors duration-[var(--duration-fast)] hover:text-primary hover:decoration-primary"
               >
                 {s}
               </button>
@@ -93,25 +94,23 @@ export default function AssistantChat({ initialMessages }: { initialMessages: Ch
         {messages.map((m) => (
           <div
             key={m.id}
-            className={`flex flex-col gap-2 border-b border-border py-6 ${
+            className={`flex min-h-[80px] flex-col gap-2 border-b border-border py-6 ${
               m.role === "ASSISTANT" ? "pl-5" : ""
             }`}
             style={m.role === "ASSISTANT" ? { boxShadow: "inset 2px 0 0 var(--color-primary)" } : undefined}
           >
-            <span className="text-[11px] font-bold uppercase tracking-wider text-ink-soft">
-              {m.role === "USER" ? "Du" : "Coach"}
-            </span>
+            <span className="text-label text-ink-faint">{m.role === "USER" ? "Du" : "Coach"}</span>
             <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-ink">{m.content}</p>
 
             {m.recipes && m.recipes.length > 0 && (
               <div className="mt-2 flex flex-col">
                 {m.recipes.map((r) => (
-                  <div key={r.id} className="flex items-center gap-3 border-t border-border py-3 first:border-t-0">
-                    <RecipeThumb recipe={r} className="h-11 w-11 shrink-0 rounded-xl text-lg" />
+                  <div key={r.id} className="flex min-h-[68px] items-center gap-3 border-t border-border py-3 first:border-t-0">
+                    <RecipeThumb recipe={r} className="h-11 w-11 shrink-0 rounded-[var(--radius-sm)] text-lg" />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-semibold text-ink">{r.name}</div>
-                      <div className="text-xs text-ink-soft">
-                        {approxKcal(r.kcal)} · {approxGrams(r.proteinG)} Protein
+                      <div className="num text-[12px] text-ink-faint">
+                        {approxKcal(r.kcal)} {approxGrams(r.proteinG)} Protein
                       </div>
                     </div>
                     <RecipeDetailModal recipe={r} trigger="Details" />
@@ -123,15 +122,22 @@ export default function AssistantChat({ initialMessages }: { initialMessages: Ch
         ))}
 
         {sending && (
-          <div className="flex flex-col gap-2 border-b border-border py-6 pl-5" style={{ boxShadow: "inset 2px 0 0 var(--color-primary)" }}>
-            <span className="text-[11px] font-bold uppercase tracking-wider text-ink-soft">Coach</span>
-            <p className="text-sm text-ink-soft">Überlegt gerade.</p>
+          <div className="flex min-h-[80px] flex-col gap-2 border-b border-border py-6 pl-5" style={{ boxShadow: "inset 2px 0 0 var(--color-primary)" }}>
+            <span className="text-label text-ink-faint">Coach</span>
+            <p className="flex items-center gap-1.5 text-[15px] text-ink-soft">
+              Überlegt gerade
+              <span className="flex items-end gap-0.5">
+                <span className="typing-dot h-1 w-1 rounded-full bg-ink-soft" style={{ animationDelay: "0ms" }} />
+                <span className="typing-dot h-1 w-1 rounded-full bg-ink-soft" style={{ animationDelay: "150ms" }} />
+                <span className="typing-dot h-1 w-1 rounded-full bg-ink-soft" style={{ animationDelay: "300ms" }} />
+              </span>
+            </p>
           </div>
         )}
         <div ref={endRef} />
       </div>
 
-      {error && <p className="mt-3 text-sm text-primary">{error}</p>}
+      {error && <p className="mt-3 text-[14px] text-primary">{error}</p>}
 
       <form
         onSubmit={(e) => {
@@ -151,15 +157,11 @@ export default function AssistantChat({ initialMessages }: { initialMessages: Ch
           }}
           placeholder="Frag deinen Coach"
           rows={2}
-          className="flex-1 resize-none rounded-2xl bg-bg-dim px-4 py-3 text-[15px] text-ink outline-none placeholder:text-ink-soft/70"
+          className="flex-1 resize-none rounded-[var(--radius-md)] bg-bg-dim px-4 py-3 text-[15px] text-ink outline-none placeholder:text-ink-faint"
         />
-        <button
-          type="submit"
-          disabled={sending || !draft.trim()}
-          className="shrink-0 rounded-full bg-ink px-6 py-3.5 text-sm font-semibold text-white transition hover:bg-black disabled:opacity-40"
-        >
+        <Button type="submit" disabled={sending || !draft.trim()} className="shrink-0">
           Senden
-        </button>
+        </Button>
       </form>
     </div>
   );

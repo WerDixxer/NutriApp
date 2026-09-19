@@ -60,10 +60,18 @@ export async function getApiHouseholdId(): Promise<string | null> {
   return membership?.householdId ?? null;
 }
 
-/** Für Server Components/Pages: wie `getApiHouseholdId()`, leitet aber zu /login bzw. zeigt einen Fehler statt null zurückzugeben. */
+/**
+ * Für Server Components/Pages: wie `getApiHouseholdId()`, leitet aber zu
+ * /login (nicht angemeldet) bzw. /household (angemeldet, aber aktuell keinem
+ * Haushalt zugeordnet) um, statt einen Fehler zu werfen. Der zweite Fall war
+ * vor Kapitel 9 nie erreichbar (jede Registrierung legt sofort einen eigenen
+ * Haushalt an); seit `leaveHousehold()`/Mitglied-Entfernung ist er es, daher
+ * ein sauberer Redirect statt eines rohen Error-Boundary-Absturzes auf
+ * Pantry/Budget.
+ */
 export async function requireHouseholdId(): Promise<string> {
   const userId = await requireSessionUserId();
   const membership = await prisma.householdMember.findUnique({ where: { userId }, select: { householdId: true } });
-  if (!membership) throw new Error("Kein Haushalt für diesen Account gefunden.");
+  if (!membership) redirect("/household");
   return membership.householdId;
 }

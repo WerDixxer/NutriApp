@@ -5,7 +5,7 @@ const BASE_URL = "https://world.openfoodfacts.org/api/v2/product";
 // Open Food Facts bittet API-Nutzer ausdrücklich um einen aussagekräftigen
 // User-Agent (https://openfoodfacts.github.io/openfoodfacts-server/api/), um
 // Clients bei Problemen zuordnen zu können.
-const USER_AGENT = "NutriCoach/1.0 (persoenliche Ernaehrungsapp, dev)";
+const USER_AGENT = "GoodOrder/1.0 (persoenliche Ernaehrungsapp, dev)";
 
 /** Nur die Felder, die wir tatsächlich verwenden. Alles andere lassen wir zod ignorieren. */
 const nutrimentsSchema = z
