@@ -10,7 +10,7 @@ export interface HardConstraintContext {
   dietType: DietType;
   /** Explizit in dieser Nachricht ausgeschlossene Zutaten. */
   excludedIngredients: string[];
-  /** Food-Katalog für die Auflösung ausgeschlossener Zutaten; ohne ihn bleibt es beim Textabgleich. */
+  /** Food-Katalog für die Auflösung ausgeschlossener Zutaten und allergener Zutaten; ohne ihn bleibt es beim Textabgleich. */
   catalog?: FoodCatalog;
 }
 
@@ -33,7 +33,7 @@ export function checkHardConstraints(
 ): HardConstraintViolation[] {
   const violations: HardConstraintViolation[] = [];
 
-  if (ctx.allergies.length > 0 && matchesAllergen(candidate.allergens, ctx.allergies, candidate.ingredients)) {
+  if (ctx.allergies.length > 0 && matchesAllergen(candidate.allergens, ctx.allergies, candidate.ingredients, ctx.catalog)) {
     violations.push({
       constraint: "allergies",
       detail: `Enthält ein Allergen aus deiner Liste (${ctx.allergies.join(", ")}).`,

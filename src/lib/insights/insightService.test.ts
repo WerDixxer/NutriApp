@@ -6,6 +6,7 @@ const pantryItemFindMany = vi.fn();
 const mealPlanDayFindMany = vi.fn();
 const recipeFindMany = vi.fn();
 const dismissedInsightFindMany = vi.fn();
+const ingredientFindMany = vi.fn();
 
 vi.mock("../db", () => ({
   prisma: {
@@ -15,8 +16,8 @@ vi.mock("../db", () => ({
     mealPlanDay: { findMany: (...args: unknown[]) => mealPlanDayFindMany(...args) },
     recipe: { findMany: (...args: unknown[]) => recipeFindMany(...args) },
     dismissedInsight: { findMany: (...args: unknown[]) => dismissedInsightFindMany(...args) },
-    // Leerer Food-Katalog (Food-ID-Abgleich ist in enrichment.test.ts abgedeckt).
-    ingredient: { findMany: async () => [] },
+    // Standard: leerer Food-Katalog (Food-ID-Abgleich ist in enrichment.test.ts abgedeckt).
+    ingredient: { findMany: (...args: unknown[]) => ingredientFindMany(...args) },
     ingredientAlternative: { findMany: async () => [] },
   },
 }));
@@ -45,6 +46,55 @@ beforeEach(() => {
   mealPlanDayFindMany.mockResolvedValue([]);
   recipeFindMany.mockResolvedValue([]);
   dismissedInsightFindMany.mockResolvedValue([]);
+  ingredientFindMany.mockResolvedValue([]);
+});
+
+describe("getInsightsForProfile: Rezeptvorschläge und Allergien (F-03)", () => {
+  /** Ein Food-Katalog mit nur Skyr (Milch) - so, wie ihn loadFoodCatalog aus der Ingredient-Tabelle liest. */
+  const skyrFoodRow = {
+    id: "skyr",
+    slug: "skyr",
+    name: "Skyr",
+    category: "dairy",
+    dietClass: "vegetarian",
+    aliases: "[]",
+    allergens: JSON.stringify(["milch"]),
+    negligible: false,
+    unitGrams: null,
+    kcalPer100: 63,
+    proteinPer100G: 11,
+    carbsPer100G: 4,
+    fatPer100G: 0.2,
+    fiberPer100G: 0,
+    sugarPer100G: 4,
+    saturatedFatPer100G: 0.1,
+    sodiumPer100Mg: 50,
+  };
+  /** Eigenes Rezept ohne Allergen-Angabe: nur der Food-Katalog weiß, dass Skyr Milch enthält. */
+  const skyrRecipe = {
+    id: "custom-skyr",
+    name: "Skyr pur",
+    dietTypes: JSON.stringify(["OMNIVORE"]),
+    allergens: "[]",
+    ingredients: JSON.stringify(["300 g Skyr"]),
+  };
+
+  beforeEach(() => {
+    ingredientFindMany.mockResolvedValue([skyrFoodRow]);
+    recipeFindMany.mockResolvedValue([skyrRecipe]);
+    pantryItemFindMany.mockResolvedValue([{ id: "pantry-skyr", name: "Skyr", ingredientId: null, remainingQuantity: 500, unit: "G", expirationDate: null }]);
+  });
+
+  it("Gegenprobe: ohne Allergie wird das Rezept vorgeschlagen, weil alles im Vorrat ist", async () => {
+    const insights = await getInsightsForProfile("profile-1", now);
+    expect(insights.map((i) => i.type)).toContain("RECIPE_MATCHES_AVAILABLE_PANTRY");
+  });
+
+  it("bei Milchallergie wird das Skyr-Rezept ohne Allergen-Angabe nicht vorgeschlagen", async () => {
+    profileFindUnique.mockResolvedValue({ ...baseProfile, allergies: [{ label: "Milch" }] });
+    const insights = await getInsightsForProfile("profile-1", now);
+    expect(insights.map((i) => i.type)).not.toContain("RECIPE_MATCHES_AVAILABLE_PANTRY");
+  });
 });
 
 describe("getInsightsForProfile", () => {

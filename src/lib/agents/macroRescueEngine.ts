@@ -61,9 +61,9 @@ export class MacroRescueEngine {
     const dbRecipes = await prisma.recipe.findMany({
       where: { OR: [{ isCustom: false }, { ownerProfileId: input.profileId }] },
     });
-    // Ausgeschlossene Zutaten laufen über die gemeinsame Food-Auflösung; ohne solche Angaben ist der Katalog unnötig.
+    // Ausgeschlossene Zutaten und Allergien laufen über die gemeinsame Food-Auflösung; ohne beides ist der Katalog unnötig.
     const excluded = input.excludedIngredients ?? [];
-    const catalog = excluded.length > 0 ? await loadFoodCatalog() : undefined;
+    const catalog = excluded.length > 0 || profile.allergies.length > 0 ? await loadFoodCatalog() : undefined;
     let candidates = dbRecipes.map(dbRecipeToSearchable);
     if (catalog) candidates = await attachStructuredIngredients(candidates);
 

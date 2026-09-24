@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { validateGeneratedPlan } from "./validatePlan";
 import type { GeneratedMealPlan, MemberPlanningContext, PlanningContext } from "./types";
 import type { SearchableRecipe } from "../agents/recipeSearch";
+import { buildSeedCatalog } from "../recipes/data/build";
+import { createFoodPreferenceContext } from "../recipes/foodPreferences";
 
 const now = new Date("2026-09-17T12:00:00");
 
@@ -70,6 +72,19 @@ describe("validateGeneratedPlan: gültiger Plan", () => {
   it("liefert keine Fehler für einen vollständig gültigen Plan", () => {
     const errors = validateGeneratedPlan(plan(), context(), { ...input, slots: [...input.slots] });
     expect(errors).toEqual([]);
+  });
+});
+
+describe("validateGeneratedPlan: Allergien über den Food-Katalog (F-03)", () => {
+  it("meldet ein eigenes Skyr-Rezept ohne Allergen-Angabe für ein Mitglied mit Milchallergie", () => {
+    const skyr = recipe({ allergens: [], ingredients: ["300 g Skyr"] });
+    const ctx = context({
+      members: [member({ allergies: ["Milch"] })],
+      candidates: [skyr],
+      foodPreferences: createFoodPreferenceContext({ favoriteFoods: [], dislikedFoods: [] }, buildSeedCatalog()),
+    });
+    const errors = validateGeneratedPlan(plan(), ctx, { ...input, slots: [...input.slots] });
+    expect(errors.map((e) => e.message)).toEqual([expect.stringContaining("Verletzt Hard Constraints")]);
   });
 });
 

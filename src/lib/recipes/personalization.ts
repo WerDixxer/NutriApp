@@ -279,8 +279,8 @@ function canComputeNutrition(ingredient: StructuredIngredient, food: CatalogFood
   return ingredientGrams(ingredient, food) !== null && food.nutrition !== null;
 }
 
-function foodConflictsWithAllergies(food: CatalogFood, displayName: string, allergyLabels: string[]): boolean {
-  return recipeBlockedByAllergies(food.allergens, allergyLabels, [food.name, displayName]);
+function foodConflictsWithAllergies(food: CatalogFood, displayName: string, allergyLabels: string[], catalog: FoodCatalog): boolean {
+  return recipeBlockedByAllergies(food.allergens, allergyLabels, [food.name, displayName], catalog);
 }
 
 /**
@@ -303,7 +303,7 @@ function chooseReplacement(
     if (edge.requiresContext) return [];
     const target = ctx.catalog.get(edge.toId);
     if (!target || target.id === source.id || ctx.dislikedFoodIds.has(target.id)) return [];
-    if (ctx.allergyLabels.length > 0 && (ctx.unverifiable || foodConflictsWithAllergies(target, target.name, ctx.allergyLabels))) return [];
+    if (ctx.allergyLabels.length > 0 && (ctx.unverifiable || foodConflictsWithAllergies(target, target.name, ctx.allergyLabels, ctx.catalog))) return [];
     if (sourceComputable && !canComputeNutrition({ ...ingredient, foodId: target.id }, target)) return [];
     return [{ target, type: edge.type }];
   });
@@ -354,7 +354,7 @@ export function personalizeRecipe(
     if (!source) return ingredient;
 
     let reason: SwapReason;
-    if (allergyLabels.length > 0 && foodConflictsWithAllergies(source, ingredient.displayName, allergyLabels)) {
+    if (allergyLabels.length > 0 && foodConflictsWithAllergies(source, ingredient.displayName, allergyLabels, catalog)) {
       reason = "allergen";
     } else if (favoriteFoodIds.has(ingredient.foodId)) {
       return ingredient;
@@ -386,7 +386,7 @@ export function personalizeRecipe(
   const allergens = deriveAllergens(ingredients, catalog);
   const originalLines = recipe.ingredients.map(formatIngredientLine);
   const blocked = (foodAllergens: string[], lines: string[]) =>
-    allergyLabels.length > 0 && recipeBlockedByAllergies(foodAllergens, allergyLabels, lines);
+    allergyLabels.length > 0 && recipeBlockedByAllergies(foodAllergens, allergyLabels, lines, catalog);
 
   return {
     adapted: swaps.length > 0,

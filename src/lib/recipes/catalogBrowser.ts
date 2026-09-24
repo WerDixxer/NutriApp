@@ -332,7 +332,7 @@ export function browseCatalog<T extends BrowseRecipe>(
       }),
     );
     const flags: BrowseFlags = {
-      blockedByAllergy: matchesAllergen(recipe.allergens, preferences.allergyLabels, recipe.ingredientLines),
+      blockedByAllergy: matchesAllergen(recipe.allergens, preferences.allergyLabels, recipe.ingredientLines, catalog),
       dislikes: isDislikedHit(match) ? [...new Set(match.dislikeConflicts.map((c) => c.label))] : [],
       favorite: isLikedHit(match),
       adaptable: variant !== null,

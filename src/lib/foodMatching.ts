@@ -1,4 +1,5 @@
 import { recipeBlockedByAllergies } from "./recipes/allergens";
+import type { FoodCatalog } from "./recipes/catalog";
 
 /**
  * Gemeinsame, deterministische Matching-Bausteine für Essensplaner UND
@@ -10,12 +11,17 @@ import { recipeBlockedByAllergies } from "./recipes/allergens";
  * Sperrt das Rezept wegen der Allergien des Nutzers? Läuft über die zentrale
  * Auflösung in recipes/allergens.ts (Nutzer-Freitext -> kanonisches Allergen),
  * NICHT über Teilstring-Vergleiche: "Erdnüsse" muss das Rezept-Allergen
- * "erdnuss" treffen. `ingredientLines` (optional) erlaubt für Begriffe, die
- * nicht im Allergen-Vokabular stehen, einen Textabgleich gegen die Zutaten,
- * damit ein unbekanntes Allergen nie als sicher durchgeht.
+ * "erdnuss" treffen. `ingredientLines` werden zusätzlich auf Allergene geprüft
+ * (gespeicherte Rezept-Allergene können unvollständig sein), `catalog` erkennt
+ * dabei auch Foods, deren Name kein Allergen nennt ("Skyr" -> Milch).
  */
-export function matchesAllergen(recipeAllergens: string[], profileAllergies: string[], ingredientLines: string[] = []): boolean {
-  return recipeBlockedByAllergies(recipeAllergens, profileAllergies, ingredientLines);
+export function matchesAllergen(
+  recipeAllergens: string[],
+  profileAllergies: string[],
+  ingredientLines: string[] = [],
+  catalog?: FoodCatalog,
+): boolean {
+  return recipeBlockedByAllergies(recipeAllergens, profileAllergies, ingredientLines, catalog);
 }
 
 /** Enthält eine der Zutaten-Zeilen den gesuchten Begriff (z.B. "gurke" in "2 Salatgurken")? */

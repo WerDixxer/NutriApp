@@ -166,16 +166,18 @@ export async function loadCatalogRecipes(): Promise<CatalogEntry[]> {
 }
 
 /**
- * Alle Rezepte für den Quality-/Duplikat-Report (Kapitel 18): anders als `loadCatalogRecipes`
- * ohne `slug`-Filter (auch die 30 Altrezepte) und mit den ROHEN RecipeIngredient-Zeilen -
- * bewusst OHNE den `foodId: { not: null }}`-Filter von `loadStructuredIngredients`, damit der
- * Audit fehlende Food-Referenzen selbst sehen und melden kann, statt dass sie unbemerkt
- * herausgefiltert werden. Rein lesend, keine Schreiboperation.
+ * Alle Rezepte des GLOBALEN Katalogs für den Quality-/Duplikat-Report (Kapitel 18), die interne
+ * Review-Queue und die Duplikatprüfung von Importen: anders als `loadCatalogRecipes` ohne
+ * `slug`-Filter (auch die 30 Altrezepte) und mit den ROHEN RecipeIngredient-Zeilen - bewusst OHNE
+ * den `foodId: { not: null }}`-Filter von `loadStructuredIngredients`, damit der Audit fehlende
+ * Food-Referenzen selbst sehen und melden kann. Private eigene Rezepte (`isCustom`) gehören
+ * Nutzern, nicht dem Katalog: sie tauchen hier nie auf (weder als Name in internen Werkzeugen noch
+ * als Duplikat eines Imports). Rein lesend, keine Schreiboperation.
  */
 export async function loadCatalogQualityInputs(): Promise<QualityRecipeInput[]> {
   const [rows, ingredientRows] = await Promise.all([
-    prisma.recipe.findMany({ orderBy: [{ createdAt: "asc" }, { name: "asc" }] }),
-    prisma.recipeIngredient.findMany({ orderBy: [{ recipeId: "asc" }, { position: "asc" }] }),
+    prisma.recipe.findMany({ where: { isCustom: false }, orderBy: [{ createdAt: "asc" }, { name: "asc" }] }),
+    prisma.recipeIngredient.findMany({ where: { recipe: { isCustom: false } }, orderBy: [{ recipeId: "asc" }, { position: "asc" }] }),
   ]);
 
   const byRecipe = new Map<string, QualityIngredientRow[]>();

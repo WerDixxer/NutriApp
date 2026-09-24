@@ -1,4 +1,5 @@
 import type { TagSuggestion } from "../tagInput";
+import type { FoodCatalog } from "./catalog";
 import { normalizeFoodLabel } from "./catalog";
 import { DEFAULT_SUGGESTION_LIMIT, MIN_SUGGESTION_LENGTH, prefixRank, type SuggestOptions } from "./foodSuggestions";
 
@@ -148,18 +149,112 @@ export function canonicalizeRecipeAllergens(recipeAllergens: string[]): { canoni
 }
 
 /**
- * Sperrt ein Rezept wegen der Allergien eines Nutzers? Zwei Wege:
- *  1. aufgelöste Allergene gegen die kanonischen Rezept-Allergene,
- *  2. unaufgelöste Begriffe (nicht im Vokabular) als Text gegen unbekannte
- *     Rezept-Allergene und, wenn übergeben, gegen die Zutatenzeilen.
- * Ein nicht eindeutig zuordenbarer Begriff gilt damit nie als "sicher".
+ * Begriffe ab dieser Länge zählen auch als Anfang oder Ende eines zusammengesetzten Worts
+ * ("Erdnussbutter", "Weizenmehl", "Buttermilch"). Kürzere ("ei", "nut") nur als ganzes Wort,
+ * sonst träfe "ei" z.B. "Eisbergsalat".
  */
-export function recipeBlockedByAllergies(recipeAllergens: string[], allergyLabels: string[], ingredientLines: string[] = []): boolean {
+const COMPOUND_MIN_TERM_LENGTH = 4;
+
+/** Zusammengesetzte Wörter, deren Allergen-Teil dieses Allergen gerade nicht bedeutet. */
+const NOT_THIS_ALLERGEN: Record<string, CanonicalAllergen[]> = {
+  kokosmilch: ["milch"],
+  kokosnussmilch: ["milch"],
+  hafermilch: ["milch"],
+  reismilch: ["milch"],
+  dinkelmilch: ["milch"],
+  mandelmilch: ["milch"],
+  cashewmilch: ["milch"],
+  haselnussmilch: ["milch"],
+  sojamilch: ["milch"],
+  erbsenmilch: ["milch"],
+  muskatnuss: ["nüsse"],
+  kokosnuss: ["nüsse"],
+  eiersatz: ["ei"],
+};
+
+/** Allergene, die ein einzelnes (normalisiertes) Wort eines Zutatentexts nennt. */
+function allergensNamedByWord(word: string): CanonicalAllergen[] {
+  const exact = TERM_INDEX.get(word);
+  if (exact) return [exact.recipe];
+
+  const found = new Set<CanonicalAllergen>();
+  for (const [term, entry] of TERM_INDEX) {
+    if (term.length < COMPOUND_MIN_TERM_LENGTH) continue;
+    // "glutenfrei", "laktosefreie": das Wort sagt das Gegenteil des Allergens aus.
+    const namesPrefix = word.startsWith(term) && !word.slice(term.length).startsWith("frei");
+    if (namesPrefix || word.endsWith(term)) found.add(entry.recipe);
+  }
+  const notMeant = NOT_THIS_ALLERGEN[word] ?? [];
+  return [...found].filter((allergen) => !notMeant.includes(allergen));
+}
+
+/**
+ * Sucht zusammenhängende Wortfolgen (längste zuerst), die im FoodCatalog ein Food benennen, und
+ * übernimmt dessen gepflegte Allergene. Mehrdeutige Aliase zählen mit den Allergenen ALLER
+ * möglichen Foods (im Zweifel mehr sperren). Liefert die so abgedeckten Wortpositionen.
+ */
+function addAllergensOfNamedFoods(words: string[], catalog: FoodCatalog, found: Set<CanonicalAllergen>): Set<number> {
+  const covered = new Set<number>();
+  for (let length = words.length; length >= 1; length--) {
+    for (let start = 0; start + length <= words.length; start++) {
+      const positions = Array.from({ length }, (_, i) => start + i);
+      if (positions.some((p) => covered.has(p))) continue;
+      const foods = catalog.resolveLabel(words.slice(start, start + length).join(" "));
+      if (foods.length === 0) continue;
+      for (const food of foods) for (const allergen of canonicalizeRecipeAllergens(food.allergens).canonical) found.add(allergen);
+      for (const p of positions) covered.add(p);
+    }
+  }
+  return covered;
+}
+
+/**
+ * Allergene, die aus Zutatenzeilen eindeutig hervorgehen. Zeilenteile, die im FoodCatalog auf ein
+ * Food auflösen ("Skyr", "Räuchertofu", "Hafermilch"), zählen mit dessen gepflegten Allergenen und
+ * werden nicht zusätzlich als Text gedeutet ("Hafermilch" ist Haferdrink: Gluten, keine Milch).
+ * Alle übrigen Wörter laufen gegen das Allergen-Vokabular oben. Ohne Katalog bleibt nur der Text.
+ */
+export function allergensInIngredientLines(lines: readonly string[], catalog?: FoodCatalog): Set<CanonicalAllergen> {
+  const found = new Set<CanonicalAllergen>();
+  for (const line of lines) {
+    const words = normalizeFoodLabel(line)
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean);
+    const coveredByFoods = catalog ? addAllergensOfNamedFoods(words, catalog, found) : new Set<number>();
+    words.forEach((word, i) => {
+      if (!coveredByFoods.has(i)) for (const allergen of allergensNamedByWord(word)) found.add(allergen);
+    });
+  }
+  return found;
+}
+
+/**
+ * Sperrt ein Rezept wegen der Allergien eines Nutzers? Drei Wege:
+ *  1. aufgelöste Allergene gegen die kanonischen Rezept-Allergene,
+ *  2. aufgelöste Allergene gegen die Zutatenzeilen (`allergensInIngredientLines`): gespeicherte
+ *     Rezept-Allergene können unvollständig sein - eigene und Altrezepte werden von Hand gepflegt,
+ *     ein fehlender Eintrag darf ein Rezept nicht "sicher" machen,
+ *  3. unaufgelöste Begriffe (nicht im Vokabular) als Text gegen unbekannte
+ *     Rezept-Allergene und, wenn übergeben, gegen die Zutatenzeilen.
+ * Ein nicht eindeutig zuordenbarer Begriff gilt damit nie als "sicher". `catalog` (wo vorhanden)
+ * erkennt in Weg 2 auch Foods, deren Name kein Allergen nennt ("Skyr" -> Milch).
+ */
+export function recipeBlockedByAllergies(
+  recipeAllergens: string[],
+  allergyLabels: string[],
+  ingredientLines: string[] = [],
+  catalog?: FoodCatalog,
+): boolean {
   if (allergyLabels.length === 0) return false;
   const { allergens, unresolvedTerms } = resolveAllergyLabels(allergyLabels);
   const { canonical, other } = canonicalizeRecipeAllergens(recipeAllergens);
 
   for (const allergen of allergens) if (canonical.has(allergen)) return true;
+
+  if (allergens.size > 0 && ingredientLines.length > 0) {
+    const inIngredients = allergensInIngredientLines(ingredientLines, catalog);
+    for (const allergen of allergens) if (inIngredients.has(allergen)) return true;
+  }
 
   if (unresolvedTerms.length === 0) return false;
   const lines = ingredientLines.map(normalizeFoodLabel);

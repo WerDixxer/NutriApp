@@ -15,6 +15,16 @@ vi.mock("./remainingTargets", () => ({
   getRemainingDailyTargets: (...args: unknown[]) => getRemainingDailyTargetsMock(...args),
 }));
 
+// Katalog aus den Seed-Daten statt aus der Datenbank; strukturierte Zutaten gibt es für die Testrezepte nicht.
+const loadFoodCatalogMock = vi.fn();
+vi.mock("../recipes/recipeService", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../recipes/recipeService")>()),
+  loadFoodCatalog: () => loadFoodCatalogMock(),
+  attachStructuredIngredients: async <T,>(candidates: T[]) => candidates,
+}));
+const { buildSeedCatalog } = await import("../recipes/data/build");
+loadFoodCatalogMock.mockResolvedValue(buildSeedCatalog());
+
 const { MacroRescueEngine } = await import("./macroRescueEngine");
 
 const baseProfile = { id: "profile-1", dietType: "OMNIVORE", allergies: [] };
@@ -86,6 +96,20 @@ describe("MacroRescueEngine (integration wrapper)", () => {
 
     expect(result.tolerances.caloriesPct).toBe(0.01);
     expect(result.tolerances.proteinPct).toBeGreaterThan(0.01);
+  });
+
+  it("F-03: bei Allergien wird der Food-Katalog genutzt - ein eigenes Skyr-Rezept ohne Allergen-Angabe fällt bei Milchallergie heraus", async () => {
+    profileFindUniqueOrThrow.mockResolvedValue({ ...baseProfile, allergies: [{ label: "Milch" }] });
+    recipeFindMany.mockResolvedValue([
+      dbRecipe({ id: "skyr-bowl", ingredients: JSON.stringify(["300 g Skyr", "1 Banane"]) }),
+      dbRecipe({ id: "rice-bowl", ingredients: JSON.stringify(["150 g Reis", "2 Tomaten"]) }),
+    ]);
+    getRemainingDailyTargetsMock.mockResolvedValue({ kcal: 650, proteinG: 55, carbsG: 60, fatG: 18 });
+
+    const result = await new MacroRescueEngine().rescue({ profileId: "profile-1" });
+
+    expect(result.solutions.map((s) => s.recipeId)).toEqual(["rice-bowl"]);
+    expect(result.rejectedCandidates).toContainEqual(expect.objectContaining({ recipeId: "skyr-bowl" }));
   });
 
   it("liefert eine leere Lösungsliste ohne Fehler, wenn kein Kandidat vorhanden ist", async () => {

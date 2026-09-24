@@ -60,7 +60,7 @@ export function validateGeneratedPlan(
     if (!input.slots.includes(meal.slot)) {
       errors.push({ meal, message: "Mahlzeiten-Slot wurde nicht angefordert." });
     }
-    const violations = checkHouseholdHardConstraints(recipe, context.members, context.excludedIngredients);
+    const violations = checkHouseholdHardConstraints(recipe, context.members, context.excludedIngredients, context.foodPreferences?.catalog);
     if (violations.length > 0) {
       errors.push({ meal, message: `Verletzt Hard Constraints: ${violations.map((v) => v.detail).join(" ")}` });
     }

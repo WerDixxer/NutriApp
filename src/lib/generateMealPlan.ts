@@ -116,13 +116,17 @@ export async function getOrGenerateDayPlan(profileId: string, date: Date, weekUs
   const allergyLabels = profile.allergies.map((a) => a.label);
   const dislikedLabels = profile.dislikedFoods.map((d) => d.label);
   const likedLabels = profile.likedFoods.map((l) => l.label);
+  const hasPreferences = likedLabels.length + dislikedLabels.length > 0;
+
+  // Der Katalog wird nur gebraucht, wenn es Allergien oder Präferenzen gibt.
+  const catalog = allergyLabels.length > 0 || hasPreferences ? await loadFoodCatalog() : undefined;
 
   // Allergien sind ein harter Ausschluss (gemeinsame Auflösung, siehe recipes/allergens.ts).
   const compatibleRecipes = allRecipes.filter((r) => {
     const dietTypes = JSON.parse(r.dietTypes) as string[];
     const allergens = JSON.parse(r.allergens) as string[];
     if (!dietTypes.includes(profile.dietType)) return false;
-    if (matchesAllergen(allergens, allergyLabels, JSON.parse(r.ingredients) as string[])) return false;
+    if (matchesAllergen(allergens, allergyLabels, JSON.parse(r.ingredients) as string[], catalog)) return false;
     return true;
   });
 
@@ -130,10 +134,9 @@ export async function getOrGenerateDayPlan(profileId: string, date: Date, weekUs
   // Rezepte, Text für Altrezepte). Nur laden, wenn es überhaupt Präferenzen gibt.
   let preferences: FoodPreferenceContext | null = null;
   let structuredByRecipe = new Map<string, StructuredIngredient[]>();
-  if (likedLabels.length + dislikedLabels.length > 0) {
-    const [catalog, structured] = await Promise.all([loadFoodCatalog(), loadStructuredIngredients(compatibleRecipes.map((r) => r.id))]);
+  if (hasPreferences && catalog) {
+    structuredByRecipe = await loadStructuredIngredients(compatibleRecipes.map((r) => r.id));
     preferences = createFoodPreferenceContext({ favoriteFoods: likedLabels, dislikedFoods: dislikedLabels }, catalog);
-    structuredByRecipe = structured;
   }
 
   const candidatesBySlot = new Map<MealSlot, RecipeCandidate[]>();

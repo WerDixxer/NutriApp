@@ -112,7 +112,7 @@ export function searchRecipes(
   const filtered = candidates.filter((r) => {
     if (targetSlot && !r.mealSlots.includes(targetSlot)) return false;
     if (query.maxPreparationTimeMin && r.prepTimeMin > query.maxPreparationTimeMin) return false;
-    if (matchesAllergen(r.allergens, query.allergies ?? [], r.ingredients)) return false;
+    if (matchesAllergen(r.allergens, query.allergies ?? [], r.ingredients, catalog)) return false;
     const excluded = query.excludedIngredients ?? [];
     const hitsExcluded = catalog
       ? conflictingLabels(r, excluded, catalog).length > 0

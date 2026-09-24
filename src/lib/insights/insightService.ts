@@ -103,7 +103,7 @@ export async function getInsightsForProfile(profileId: string, now: Date = new D
         const dietTypes = JSON.parse(r.dietTypes) as string[];
         const allergens = JSON.parse(r.allergens) as string[];
         if (!dietTypes.includes(profile.dietType)) return false;
-        if (matchesAllergen(allergens, allergyLabels, JSON.parse(r.ingredients) as string[])) return false;
+        if (matchesAllergen(allergens, allergyLabels, JSON.parse(r.ingredients) as string[], catalog)) return false;
         return true;
       })
       .map((r) => ({ id: r.id, name: r.name, ingredients: JSON.parse(r.ingredients) as string[] }));

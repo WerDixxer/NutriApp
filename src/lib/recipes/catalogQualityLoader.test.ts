@@ -40,12 +40,15 @@ const { loadCatalogQualityInputs } = await import("./recipeService");
 beforeEach(() => vi.clearAllMocks());
 
 describe("loadCatalogQualityInputs", () => {
-  it("lädt ALLE Rezepte, nicht nur die mit slug (anders als loadCatalogRecipes)", async () => {
+  it("lädt alle Rezepte des globalen Katalogs, nicht nur die mit slug (anders als loadCatalogRecipes) - private eigene Rezepte nicht", async () => {
     recipeFindMany.mockResolvedValueOnce([recipeRow("cat-1", "protein-pancakes-with-berries"), recipeRow("legacy-1", null)]);
     recipeIngredientFindMany.mockResolvedValueOnce([]);
     const inputs = await loadCatalogQualityInputs();
     expect(inputs.map((i) => i.id).sort()).toEqual(["cat-1", "legacy-1"]);
-    expect(recipeFindMany).toHaveBeenCalledWith(expect.not.objectContaining({ where: expect.anything() }));
+    // Kein slug-Filter (Altrezepte bleiben drin), aber nur der globale Katalog; das Verhalten gegen
+    // eine echte Datenbank prüft catalogScope.test.ts.
+    expect(recipeFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { isCustom: false } }));
+    expect(recipeIngredientFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { recipe: { isCustom: false } } }));
   });
 
   it("lädt RecipeIngredient-Zeilen OHNE den foodId-Filter: eine fehlende Food-Referenz bleibt sichtbar", async () => {
