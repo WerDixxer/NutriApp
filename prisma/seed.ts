@@ -857,9 +857,21 @@ function deriveTags(r: RecipeSeed): string[] {
   return tags;
 }
 
+/**
+ * Wiederholbar: ein Rezept, das es als nicht-privates Altrezept (ohne slug) mit demselben Namen
+ * schon gibt, wird übersprungen. Es wird nichts gelöscht oder aktualisiert - auch nicht bereits
+ * vorhandene Duplikate aus früheren Läufen.
+ */
 async function main() {
   console.log(`Seede ${recipes.length} Rezepte...`);
+  let created = 0;
+  let skipped = 0;
   for (const r of recipes) {
+    const existing = await prisma.recipe.findFirst({ where: { name: r.name, slug: null, isCustom: false }, select: { id: true } });
+    if (existing) {
+      skipped++;
+      continue;
+    }
     await prisma.recipe.create({
       data: {
         name: r.name,
@@ -882,8 +894,9 @@ async function main() {
         trendAddedAt: r.isTrending ? new Date() : null,
       },
     });
+    created++;
   }
-  console.log("Fertig.");
+  console.log(`Fertig. ${created} Rezepte angelegt, ${skipped} übersprungen (bereits vorhanden).`);
 }
 
 main()
