@@ -55,7 +55,12 @@ export function generateMealPlan(context: PlanningContext, input: GeneratePlanIn
     return { status: "NO_VALID_PLAN", meals: [], unmetSlots: [] };
   }
 
-  const { allowed, rejected } = filterHouseholdCandidates(context.candidates, context.members, context.excludedIngredients);
+  const { allowed, rejected } = filterHouseholdCandidates(
+    context.candidates,
+    context.members,
+    context.excludedIngredients,
+    context.foodPreferences?.catalog,
+  );
   if (allowed.length === 0) {
     const reason =
       rejected.size > 0
@@ -92,8 +97,10 @@ export function generateMealPlan(context: PlanningContext, input: GeneratePlanIn
         slotTarget,
         likedFoods: context.members.flatMap((m) => m.likedFoods),
         dislikedFoods: context.members.flatMap((m) => m.dislikedFoods),
+        foodPreferences: context.foodPreferences,
         availablePantryIngredientNames: context.pantry.availableIngredientNames,
         urgentPantryIngredientNames: context.pantry.urgentIngredientNames,
+        pantryFoodIdsByName: context.pantry.foodIdsByName,
         remainingBudgetCents: context.budget.remainingWeekBudgetCents ?? context.budget.remainingMonthBudgetCents ?? null,
         recentRecipeCount: 0,
         usedIngredientsInPlan,

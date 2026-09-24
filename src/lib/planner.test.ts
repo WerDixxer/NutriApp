@@ -72,6 +72,34 @@ describe("selectRecipeForSlot: bisheriges Verhalten", () => {
   });
 });
 
+describe("selectRecipeForSlot: gemeinsame Präferenz-Auflösung (preferenceHit)", () => {
+  it("eine aufgelöste Abneigung schließt das Rezept aus, auch wenn der Text das Label nicht enthält", () => {
+    const flagged = recipe("aufgeloest", { ingredients: ["150 g Poulet"], preferenceHit: { liked: false, disliked: true } });
+    const other = recipe("anderes", { proteinG: 25, carbsG: 100 });
+    expect(selectRecipeForSlot([flagged, other], target, [], ["Hähnchen"], new Set())?.id).toBe("anderes");
+  });
+
+  it("ein Text-Treffer allein zählt nicht, wenn die Auflösung ihn verneint (Reis in Reiswaffeln)", () => {
+    const waffeln = recipe("waffeln", { ingredients: ["3 Reiswaffeln"], preferenceHit: { liked: false, disliked: false } });
+    expect(selectRecipeForSlot([waffeln], target, [], ["Reis"], new Set())?.id).toBe("waffeln");
+    const lieblingOhneTreffer = recipe("l", { ingredients: ["3 Reiswaffeln"], preferenceHit: { liked: false, disliked: false } });
+    const echtesLieblingsrezept = recipe("reis", { proteinG: 32, carbsG: 78, ingredients: ["75 g Reis"], preferenceHit: { liked: true, disliked: false } });
+    expect(selectRecipeForSlot([lieblingOhneTreffer, echtesLieblingsrezept], target, ["Reis"], [], new Set())?.id).toBe("reis");
+  });
+
+  it("der Lieblingsbonus greift für einen aufgelösten Treffer", () => {
+    const liked = recipe("liked", { proteinG: 30, carbsG: 95, ingredients: ["150 g Poulet"], preferenceHit: { liked: true, disliked: false } });
+    const better = recipe("besser", { ingredients: ["150 g Kartoffeln"] });
+    expect(selectRecipeForSlot([better, liked], target, ["Hähnchen"], [], new Set())?.id).toBe("liked");
+  });
+
+  it("ohne preferenceHit gilt weiter der Textabgleich", () => {
+    const text = recipe("text", { proteinG: 30, carbsG: 95, ingredients: ["150 g Reis"] });
+    const better = recipe("besser", { ingredients: ["150 g Kartoffeln"] });
+    expect(selectRecipeForSlot([better, text], target, ["Reis"], [], new Set())?.id).toBe("text");
+  });
+});
+
 describe("repetitionPenalty", () => {
   it("wächst mit jeder Verwendung und ist gedeckelt", () => {
     expect(repetitionPenalty(0)).toBe(0);

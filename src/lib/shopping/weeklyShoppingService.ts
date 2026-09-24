@@ -3,6 +3,8 @@ import { getHouseholdIdForProfile } from "../household";
 import { getHouseholdRotation } from "../rotation/rotationService";
 import type { MealForAggregation } from "../mealPrep/aggregation";
 import type { PantryItemForMatch } from "../mealPrep/enrichment";
+import type { FoodCatalog } from "../recipes/catalog";
+import { loadFoodCatalog } from "../recipes/recipeService";
 import type { RotationUrgency } from "../rotation/types";
 import { calculateWeeklyShopping, type WeeklyShoppingCalculation } from "./weeklyShopping";
 
@@ -74,19 +76,25 @@ export async function getWeeklyShoppingForProfile(
 
   let pantryItems: PantryItemForMatch[] = [];
   let urgencyByItemId = new Map<string, RotationUrgency>();
+  let catalog: FoodCatalog | undefined;
   if (householdId) {
-    const [items, rotation] = await Promise.all([
-      prisma.pantryItem.findMany({ where: { householdId }, select: { id: true, name: true, remainingQuantity: true, unit: true } }),
+    const [items, rotation, foodCatalog] = await Promise.all([
+      prisma.pantryItem.findMany({
+        where: { householdId },
+        select: { id: true, name: true, ingredientId: true, remainingQuantity: true, unit: true },
+      }),
       getHouseholdRotation(householdId, now),
+      loadFoodCatalog(),
     ]);
     pantryItems = items;
     urgencyByItemId = new Map(rotation.results.map((r) => [r.pantryItemId, r.urgency]));
+    catalog = foodCatalog;
   }
 
   return {
     weekStart: start,
     weekEnd: end,
     plannedDays: days.filter((d) => d.items.length > 0).length,
-    ...calculateWeeklyShopping(meals, pantryItems, urgencyByItemId),
+    ...calculateWeeklyShopping(meals, pantryItems, urgencyByItemId, catalog),
   };
 }

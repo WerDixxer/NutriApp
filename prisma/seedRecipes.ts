@@ -1,6 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { ALTERNATIVES } from "../src/lib/recipes/data/alternatives";
-import { buildRecipes, validateSeedData } from "../src/lib/recipes/data/build";
+import { buildRecipes, recipeIngredientRowData, recipeRowData, validateSeedData } from "../src/lib/recipes/data/build";
 import { FOODS } from "../src/lib/recipes/data/foods";
 
 /**
@@ -76,35 +76,7 @@ async function seedRecipes(idBySlug: Map<string, string>): Promise<number> {
 
   for (const r of recipes) {
     const data = {
-      name: r.name,
-      description: r.description,
-      imageQuery: r.imageQuery,
-      kcal: r.nutrition.kcal,
-      proteinG: r.nutrition.proteinG,
-      carbsG: r.nutrition.carbsG,
-      fatG: r.nutrition.fatG,
-      fiberG: r.nutrition.fiberG,
-      sugarG: r.nutrition.sugarG,
-      saturatedFatG: r.nutrition.saturatedFatG,
-      sodiumMg: r.nutrition.sodiumMg,
-      nutritionSource: "COMPUTED",
-      prepTimeMin: r.prepTimeMin,
-      cookTimeMin: r.cookTimeMin,
-      totalTimeMin: r.totalTimeMin,
-      difficulty: r.difficulty,
-      category: r.category,
-      cuisine: r.cuisine,
-      equipment: JSON.stringify(r.equipment),
-      servings: r.servings,
-      mealSlots: JSON.stringify(r.mealSlots),
-      dietTypes: JSON.stringify(r.dietTypes),
-      allergens: JSON.stringify(r.allergens),
-      ingredients: JSON.stringify(r.ingredientLines),
-      instructions: JSON.stringify(r.instructions),
-      tags: JSON.stringify(r.tags),
-      mealPrepSuitable: r.mealPrepSuitable,
-      storageDays: r.storageDays,
-      storage: r.storage,
+      ...recipeRowData(r),
       sourceType: r.source.type,
       sourceProvider: r.source.provider,
       sourceExternalId: r.source.externalId,
@@ -123,14 +95,7 @@ async function seedRecipes(idBySlug: Map<string, string>): Promise<number> {
     await prisma.recipeIngredient.createMany({
       data: r.ingredients.map((ingredient, position) => ({
         recipeId: recipe.id,
-        position,
-        foodId: idBySlug.get(ingredient.foodId)!,
-        displayName: ingredient.displayName,
-        amount: ingredient.amount,
-        unit: ingredient.unit,
-        optional: ingredient.optional,
-        note: ingredient.note ?? null,
-        gramsOverride: ingredient.gramsOverride ?? null,
+        ...recipeIngredientRowData(ingredient, position, idBySlug.get(ingredient.foodId)!),
       })),
     });
   }

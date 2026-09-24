@@ -11,6 +11,7 @@ import {
 } from "./detectors/mealPlanDetectors";
 import { detectBudgetInsights } from "./detectors/budgetDetectors";
 import { detectRecipesMatchingAvailablePantry, type RecipeInsightCandidate } from "./detectors/recipeDetectors";
+import { loadFoodCatalog } from "../recipes/recipeService";
 import { dedupeAndSortInsights, excludeDismissed } from "./dedupe";
 import type { Insight } from "./types";
 
@@ -56,10 +57,10 @@ export async function getInsightsForProfile(profileId: string, now: Date = new D
     const windowEnd = new Date(today);
     windowEnd.setDate(windowEnd.getDate() + MEAL_PLAN_LOOKAHEAD_DAYS);
 
-    const [pantryItems, budgetSummary, mealPlanDays, recipes] = await Promise.all([
+    const [pantryItems, budgetSummary, mealPlanDays, recipes, catalog] = await Promise.all([
       prisma.pantryItem.findMany({
         where: { householdId },
-        select: { id: true, name: true, remainingQuantity: true, unit: true, expirationDate: true },
+        select: { id: true, name: true, ingredientId: true, remainingQuantity: true, unit: true, expirationDate: true },
       }),
       getBudgetSummary(householdId, now),
       prisma.mealPlanDay.findMany({
@@ -70,6 +71,7 @@ export async function getInsightsForProfile(profileId: string, now: Date = new D
         where: { OR: [{ isCustom: false }, { ownerProfileId: profileId }] },
         take: RECIPE_CANDIDATE_LIMIT,
       }),
+      loadFoodCatalog(),
     ]);
 
     const pantryStock: PantryInsightStock[] = pantryItems;
@@ -89,9 +91,9 @@ export async function getInsightsForProfile(profileId: string, now: Date = new D
       })),
     );
 
-    insights.push(...detectMealMissingIngredients(mealItems, pantryStock, now));
-    insights.push(...detectMealFullyCovered(mealItems, pantryStock, now));
-    insights.push(...detectMealIngredientExpiresBeforeMeal(mealItems, pantryStock, now));
+    insights.push(...detectMealMissingIngredients(mealItems, pantryStock, now, catalog));
+    insights.push(...detectMealFullyCovered(mealItems, pantryStock, now, catalog));
+    insights.push(...detectMealIngredientExpiresBeforeMeal(mealItems, pantryStock, now, catalog));
 
     insights.push(...detectBudgetInsights(budgetSummary, now));
 
@@ -101,7 +103,7 @@ export async function getInsightsForProfile(profileId: string, now: Date = new D
         const dietTypes = JSON.parse(r.dietTypes) as string[];
         const allergens = JSON.parse(r.allergens) as string[];
         if (!dietTypes.includes(profile.dietType)) return false;
-        if (matchesAllergen(allergens, allergyLabels)) return false;
+        if (matchesAllergen(allergens, allergyLabels, JSON.parse(r.ingredients) as string[])) return false;
         return true;
       })
       .map((r) => ({ id: r.id, name: r.name, ingredients: JSON.parse(r.ingredients) as string[] }));
@@ -109,8 +111,10 @@ export async function getInsightsForProfile(profileId: string, now: Date = new D
     insights.push(
       ...detectRecipesMatchingAvailablePantry(
         recipeCandidates,
-        pantryStock.map((p) => ({ id: p.id, name: p.name, remainingQuantity: p.remainingQuantity, unit: p.unit })),
+        pantryStock.map((p) => ({ id: p.id, name: p.name, ingredientId: p.ingredientId, remainingQuantity: p.remainingQuantity, unit: p.unit })),
         now,
+        1,
+        catalog,
       ),
     );
   }

@@ -26,7 +26,7 @@ export default async function InvitePage({
 
   return (
     <div className="mx-auto flex min-h-screen max-w-sm flex-col justify-center px-6 py-16">
-      <span className="text-label text-ink-faint">Good Order</span>
+      <span className="text-label text-ink-faint">VYN</span>
       <h1 className="text-h1 mt-2 text-ink">Haushalts-Einladung</h1>
 
       {!preview ? (

@@ -1,5 +1,6 @@
 import { checkHardConstraints, type HardConstraintViolation } from "../agents/decision/hardConstraints";
 import type { SearchableRecipe } from "../agents/recipeSearch";
+import type { FoodCatalog } from "../recipes/catalog";
 import type { MemberPlanningContext } from "./types";
 
 export interface MemberViolation extends HardConstraintViolation {
@@ -18,6 +19,7 @@ export function checkHouseholdHardConstraints(
   candidate: SearchableRecipe,
   members: MemberPlanningContext[],
   excludedIngredients: string[],
+  catalog?: FoodCatalog,
 ): MemberViolation[] {
   const violations: MemberViolation[] = [];
   for (const member of members) {
@@ -25,6 +27,7 @@ export function checkHouseholdHardConstraints(
       allergies: member.allergies,
       dietType: member.dietType,
       excludedIngredients,
+      catalog,
     });
     for (const v of memberViolations) {
       violations.push({ ...v, householdMemberId: member.householdMemberId, memberName: member.name });
@@ -38,12 +41,13 @@ export function filterHouseholdCandidates(
   candidates: SearchableRecipe[],
   members: MemberPlanningContext[],
   excludedIngredients: string[],
+  catalog?: FoodCatalog,
 ): { allowed: SearchableRecipe[]; rejected: Map<string, MemberViolation[]> } {
   const allowed: SearchableRecipe[] = [];
   const rejected = new Map<string, MemberViolation[]>();
 
   for (const candidate of candidates) {
-    const violations = checkHouseholdHardConstraints(candidate, members, excludedIngredients);
+    const violations = checkHouseholdHardConstraints(candidate, members, excludedIngredients, catalog);
     if (violations.length === 0) allowed.push(candidate);
     else rejected.set(candidate.id, violations);
   }

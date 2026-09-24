@@ -1,9 +1,10 @@
 import type { FoodCatalog } from "./catalog";
 import { normalizeFoodLabel } from "./catalog";
+import { recipeBlockedByAllergies, resolveAllergyLabels } from "./allergens";
 import { deriveAllergens, deriveDietClass } from "./diet";
-import { computeRecipeNutrition, type NutritionResult } from "./nutrition";
-import type { AlternativeType, DietClass, StructuredIngredient } from "./types";
-import { formatIngredientLine } from "./units";
+import { computeRecipeNutrition, roundNutrition, type NutritionResult } from "./nutrition";
+import type { AlternativeType, CatalogFood, DietClass, RecipeUnit, StructuredIngredient } from "./types";
+import { formatAmount, formatIngredientLine, ingredientGrams } from "./units";
 
 /**
  * Präferenzen liegen in der App als Freitext-Labels vor (ProfileTag: "Magerquark",
@@ -127,8 +128,10 @@ function bestFavoriteMatch(
   }
   if (best) return best;
 
-  const index = textIndex(recipe, favorite.label);
-  return index === undefined ? null : { kind: "text", label: favorite.label, ingredientIndex: index };
+  // Das Label ist ein bekanntes Food und das Rezept ist strukturiert: kein Treffer über den Text.
+  // Sonst würde "Reis" die "Reiswaffeln" treffen. Der Textabgleich bleibt für unbekannte Labels
+  // (oben) und für Altrezepte ohne strukturierte Zutaten.
+  return null;
 }
 
 function dislikeConflict(
@@ -198,6 +201,9 @@ export function matchRecipeToPreferences(
   };
 }
 
+/** Warum eine Zutat ersetzt wurde. Allergie hat Vorrang vor Abneigung vor Lieblingsfood. */
+export type SwapReason = "allergen" | "disliked_food" | "favorite_food";
+
 export interface IngredientSwap {
   ingredientIndex: number;
   fromFoodId: string;
@@ -205,11 +211,16 @@ export interface IngredientSwap {
   toFoodId: string;
   toName: string;
   type: AlternativeType;
-  favoriteLabel: string;
+  /** Label des Lieblingsfoods, wenn das gewählte Food eines ist; sonst null. */
+  favoriteLabel: string | null;
+  /** Menge und Einheit sind die des Originals: gleiche Menge, gleiche Einheit. */
+  amount: number | null;
+  unit: RecipeUnit | null;
+  reason: SwapReason;
 }
 
 export interface PersonalizedRecipe {
-  /** true, sobald mindestens eine Zutat durch ein Lieblingsfood ersetzt wurde ("Für dich angepasst"). */
+  /** true, sobald mindestens eine Zutat ersetzt wurde ("Für dich angepasst"). */
   adapted: boolean;
   swaps: IngredientSwap[];
   ingredients: StructuredIngredient[];
@@ -219,60 +230,226 @@ export interface PersonalizedRecipe {
   originalNutrition: NutritionResult;
   allergens: string[];
   dietClass: DietClass;
+  /**
+   * Ergebnis der zentralen Allergen-Auflösung (allergens.ts) für Original und Variante; ohne
+   * übergebene Allergien immer false. Eine Variante gilt nie als allergiefrei, nur weil sie
+   * ersetzt wurde: nur wenn die Auflösung sie für die Allergien nicht mehr sperrt.
+   */
+  allergyBlocked: { original: boolean; personalized: boolean };
+}
+
+export interface PersonalizeOptions {
+  /** Abneigungen durch eine passende Alternative ersetzen (Rezeptkatalog, vom Nutzer angefordert). Standard: aus. */
+  replaceDisliked?: boolean;
+  /**
+   * Allergien/Intoleranzen des Nutzers (Freitext, Auflösung wie überall: allergens.ts). Gesetzt:
+   *  - Alternativen, die dagegen verstoßen, sind nie zulässig (auch kein Lieblingsfood),
+   *  - allergene Zutaten werden ersetzt, sofern eine sichere Alternative existiert.
+   * Enthält die Angabe Begriffe außerhalb des Allergen-Vokabulars, lässt sich keine Alternative
+   * bestätigen: dann wird nichts ersetzt (unbekannt gilt nie als sicher).
+   */
+  allergyLabels?: string[];
 }
 
 /**
- * Baut die personalisierte Variante: jede Zutat, für die eine sichere
- * (`requiresContext = false`) Alternative existiert, die der Nutzer als
- * Lieblingsfood angegeben hat, wird ersetzt - gleiche Menge, anderes Food.
- * Kontextabhängige Kanten (Avocado -> Hummus, Hähnchen -> Tofu) werden nie
- * automatisch eingesetzt, ebenso keine Alternative, die der Nutzer nicht
- * mag, und keine Zutat, die selbst schon ein Lieblingsfood ist. Nährwerte,
- * Allergene und Ernährungsform werden aus den gewählten Foods neu berechnet.
+ * Welche Kantentypen für welchen Anlass als Ersatz in Frage kommen. Abneigung: nur
+ * gleichwertige Alternativen ("similar"), damit aus "mag Skyr nicht" kein Umstieg auf
+ * Sojajoghurt oder laktosefreien Skyr wird. Allergie: zusätzlich die diätetischen Typen, denn
+ * dafür sind sie gepflegt (glutenfrei, milchfrei, ...); die Allergen-Auflösung entscheidet
+ * dann, ob das konkrete Food sicher ist. Lieblingsfood: jeder Typ, der Nutzer hat das Ziel gewählt.
+ */
+const REPLACEMENT_TYPES: Record<SwapReason, readonly AlternativeType[] | null> = {
+  allergen: ["similar", "dietary", "vegan", "dairy-free", "lactose-free", "gluten-free"],
+  disliked_food: ["similar"],
+  favorite_food: null,
+};
+
+interface ReplacementContext {
+  catalog: FoodCatalog;
+  dislikedFoodIds: Set<string>;
+  /** Lieblingsfoods in der Reihenfolge der Nutzerangabe. */
+  favorites: ResolvedLabel[];
+  allergyLabels: string[];
+  /** Allergie-Angaben, die sich nicht auf das Vokabular abbilden lassen: keine Alternative ist verifizierbar. */
+  unverifiable: boolean;
+}
+
+function canComputeNutrition(ingredient: StructuredIngredient, food: CatalogFood): boolean {
+  if (ingredient.amount === null || food.negligible) return true;
+  return ingredientGrams(ingredient, food) !== null && food.nutrition !== null;
+}
+
+function foodConflictsWithAllergies(food: CatalogFood, displayName: string, allergyLabels: string[]): boolean {
+  return recipeBlockedByAllergies(food.allergens, allergyLabels, [food.name, displayName]);
+}
+
+/**
+ * Wählt für EINE Zutat die Alternative: nur gepflegte, nicht kontextabhängige Kanten des
+ * Anlasses; nie ein abgelehntes oder für die Allergien unsicheres Food; nur wenn die Nährwerte
+ * des Ersatzes berechenbar sind. Unter mehreren gültigen gewinnt ein Lieblingsfood (in der Reihenfolge
+ * der Angabe), sonst die erste Kante in der gepflegten Reihenfolge. Kein Scoring.
+ */
+function chooseReplacement(
+  ingredient: StructuredIngredient,
+  source: CatalogFood,
+  reason: SwapReason,
+  ctx: ReplacementContext,
+): { target: CatalogFood; type: AlternativeType } | null {
+  const allowed = REPLACEMENT_TYPES[reason];
+  const sourceComputable = canComputeNutrition(ingredient, source);
+
+  // Sichere Kandidaten jedes Typs: nicht kontextabhängig, nicht abgelehnt, für die Allergien sicher, berechenbar.
+  const safe = ctx.catalog.alternativesFor(source.id).flatMap((edge) => {
+    if (edge.requiresContext) return [];
+    const target = ctx.catalog.get(edge.toId);
+    if (!target || target.id === source.id || ctx.dislikedFoodIds.has(target.id)) return [];
+    if (ctx.allergyLabels.length > 0 && (ctx.unverifiable || foodConflictsWithAllergies(target, target.name, ctx.allergyLabels))) return [];
+    if (sourceComputable && !canComputeNutrition({ ...ingredient, foodId: target.id }, target)) return [];
+    return [{ target, type: edge.type }];
+  });
+
+  // Ein Lieblingsfood ist ein ausdrücklicher Wunsch und darf jeden sicheren Kantentyp wählen ...
+  for (const favorite of ctx.favorites) {
+    for (const foodId of favorite.foodIds) {
+      const match = safe.find((c) => c.target.id === foodId);
+      if (match) return match;
+    }
+  }
+  // ... sonst gilt die erste gleichwertige Alternative des Anlasses in der gepflegten Reihenfolge.
+  return reason === "favorite_food" ? null : (safe.find((c) => !allowed || allowed.includes(c.type)) ?? null);
+}
+
+/**
+ * Baut die personalisierte Variante: pro Zutat höchstens EIN Ersatz mit gleicher Menge und
+ * Einheit; das Original bleibt unverändert (es entsteht eine neue Zutatenliste, nichts wird
+ * gespeichert). Anlässe in dieser Reihenfolge:
+ *  1. Allergie (nur mit `allergyLabels`): die Zutat verstößt laut zentraler Auflösung; Ersatz nur, wenn sicher,
+ *  2. schon ein Lieblingsfood: unangetastet,
+ *  3. Abneigung (nur mit `replaceDisliked`): Ersatz durch eine gleichwertige Alternative,
+ *  4. Lieblingsfood als Ziel: eine Kante des Foods zu einem Lieblingsfood.
+ * Kontextabhängige Kanten (`requiresContext`) werden nie automatisch eingesetzt. Ein Lieblingsfood
+ * ist nur ein Vorzug innerhalb der zulässigen Alternativen und überstimmt nie die Allergie-Prüfung.
+ * Nährwerte, Allergene und Ernährungsform werden aus den gewählten Foods neu berechnet
+ * (computeRecipeNutrition, derselbe Weg wie beim Original).
  */
 export function personalizeRecipe(
   recipe: { servings: number; ingredients: StructuredIngredient[] },
   preferences: ResolvedPreferences,
   catalog: FoodCatalog,
+  options: PersonalizeOptions = {},
 ): PersonalizedRecipe {
-  const dislikedFoodIds = new Set(preferences.dislikes.flatMap((d) => d.foodIds));
+  const allergyLabels = (options.allergyLabels ?? []).filter((l) => l.trim());
+  const ctx: ReplacementContext = {
+    catalog,
+    dislikedFoodIds: new Set(preferences.dislikes.flatMap((d) => d.foodIds)),
+    favorites: preferences.favorites,
+    allergyLabels,
+    unverifiable: allergyLabels.length > 0 && resolveAllergyLabels(allergyLabels).unresolvedTerms.length > 0,
+  };
   const favoriteFoodIds = new Set(preferences.favorites.flatMap((f) => f.foodIds));
   const swaps: IngredientSwap[] = [];
 
   const ingredients = recipe.ingredients.map((ingredient, ingredientIndex) => {
-    if (favoriteFoodIds.has(ingredient.foodId)) return ingredient;
+    const source = catalog.get(ingredient.foodId);
+    if (!source) return ingredient;
 
-    for (const favorite of preferences.favorites) {
-      for (const targetId of favorite.foodIds) {
-        if (targetId === ingredient.foodId || dislikedFoodIds.has(targetId)) continue;
-        const edge = catalog.edge(ingredient.foodId, targetId);
-        const target = catalog.get(targetId);
-        const source = catalog.get(ingredient.foodId);
-        if (!edge || edge.requiresContext || !target || !source) continue;
-
-        swaps.push({
-          ingredientIndex,
-          fromFoodId: source.id,
-          fromName: source.name,
-          toFoodId: target.id,
-          toName: target.name,
-          type: edge.type,
-          favoriteLabel: favorite.label,
-        });
-        return { ...ingredient, foodId: target.id, displayName: target.name };
-      }
+    let reason: SwapReason;
+    if (allergyLabels.length > 0 && foodConflictsWithAllergies(source, ingredient.displayName, allergyLabels)) {
+      reason = "allergen";
+    } else if (favoriteFoodIds.has(ingredient.foodId)) {
+      return ingredient;
+    } else if (options.replaceDisliked && ctx.dislikedFoodIds.has(ingredient.foodId)) {
+      reason = "disliked_food";
+    } else {
+      reason = "favorite_food";
     }
-    return ingredient;
+
+    const choice = chooseReplacement(ingredient, source, reason, ctx);
+    if (!choice) return ingredient;
+
+    swaps.push({
+      ingredientIndex,
+      fromFoodId: source.id,
+      fromName: source.name,
+      toFoodId: choice.target.id,
+      toName: choice.target.name,
+      type: choice.type,
+      favoriteLabel: preferences.favorites.find((f) => f.foodIds.includes(choice.target.id))?.label ?? null,
+      amount: ingredient.amount,
+      unit: ingredient.unit,
+      reason,
+    });
+    return { ...ingredient, foodId: choice.target.id, displayName: choice.target.name };
   });
+
+  const ingredientLines = ingredients.map(formatIngredientLine);
+  const allergens = deriveAllergens(ingredients, catalog);
+  const originalLines = recipe.ingredients.map(formatIngredientLine);
+  const blocked = (foodAllergens: string[], lines: string[]) =>
+    allergyLabels.length > 0 && recipeBlockedByAllergies(foodAllergens, allergyLabels, lines);
 
   return {
     adapted: swaps.length > 0,
     swaps,
     ingredients,
-    ingredientLines: ingredients.map(formatIngredientLine),
+    ingredientLines,
     nutrition: computeRecipeNutrition(ingredients, recipe.servings, catalog),
     originalNutrition: computeRecipeNutrition(recipe.ingredients, recipe.servings, catalog),
-    allergens: deriveAllergens(ingredients, catalog),
+    allergens,
     dietClass: deriveDietClass(ingredients, catalog),
+    allergyBlocked: {
+      original: blocked(deriveAllergens(recipe.ingredients, catalog), originalLines),
+      personalized: blocked(allergens, ingredientLines),
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Darstellung für die UI (serialisierbar, frei von DB-Zugriff)
+// ---------------------------------------------------------------------------
+
+export interface ReplacementView {
+  fromName: string;
+  toName: string;
+  /** "100 g", "2 Stück", ...; null bei Zutaten ohne Mengenangabe. Gleich für Original und Ersatz. */
+  quantity: string | null;
+  reason: SwapReason;
+}
+
+/** Die angepasste Variante, wie der Rezept-Dialog sie neben dem Original zeigt. */
+export interface PersonalizedVariant {
+  ingredientLines: string[];
+  kcal: number;
+  proteinG: number;
+  carbsG: number;
+  fatG: number;
+  replacements: ReplacementView[];
+  /** Auch die Variante enthält laut zentraler Allergen-Auflösung noch Allergene des Profils. */
+  stillBlockedByAllergy: boolean;
+}
+
+function formatQuantity(amount: number | null, unit: RecipeUnit | null): string | null {
+  if (amount === null || unit === null) return null;
+  if (unit === "piece") return `${formatAmount(amount)} Stück`;
+  return formatIngredientLine({ amount, unit, displayName: "", optional: false }).trim();
+}
+
+/** `null`, wenn nichts ersetzt wurde: dann gibt es keine Variante anzubieten. */
+export function toPersonalizedVariant(personalized: PersonalizedRecipe): PersonalizedVariant | null {
+  if (!personalized.adapted) return null;
+  const n = roundNutrition(personalized.nutrition.perServing);
+  return {
+    ingredientLines: personalized.ingredientLines,
+    kcal: n.kcal,
+    proteinG: n.proteinG,
+    carbsG: n.carbsG,
+    fatG: n.fatG,
+    replacements: personalized.swaps.map((s) => ({
+      fromName: s.fromName,
+      toName: s.toName,
+      quantity: formatQuantity(s.amount, s.unit),
+      reason: s.reason,
+    })),
+    stillBlockedByAllergy: personalized.allergyBlocked.personalized,
   };
 }

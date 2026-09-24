@@ -11,6 +11,9 @@ vi.mock("../db", () => ({
   prisma: {
     mealPlanDay: { findMany: (...args: unknown[]) => mealPlanDayFindMany(...args) },
     pantryItem: { findMany: (...args: unknown[]) => pantryItemFindMany(...args) },
+    // Leerer Food-Katalog (Food-ID-Abgleich ist in pantryFoods.test.ts / enrichment.test.ts abgedeckt).
+    ingredient: { findMany: async () => [] },
+    ingredientAlternative: { findMany: async () => [] },
   },
 }));
 

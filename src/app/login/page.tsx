@@ -17,7 +17,7 @@ export default async function LoginPage({
 
   return (
     <div className="mx-auto flex min-h-screen max-w-sm flex-col justify-center px-6 py-16">
-      <span className="text-label text-ink-faint">Good Order</span>
+      <span className="text-label text-ink-faint">VYN</span>
       <h1 className="text-h1 mt-2 text-ink">Willkommen zurück.</h1>
 
       <form action={loginAction} className="mt-8 flex flex-col gap-4">

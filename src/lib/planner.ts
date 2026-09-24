@@ -166,6 +166,12 @@ export interface RecipeCandidate {
   mealSlots: MealSlot[];
   ingredients: string[];
   isTrending: boolean;
+  /**
+   * Ergebnis der gemeinsamen Präferenz-Auflösung (recipes/foodPreferences.ts) für
+   * dieses Rezept und dieses Profil. Ohne Angabe wird wie bisher per Text auf
+   * `ingredients` abgeglichen.
+   */
+  preferenceHit?: { liked: boolean; disliked: boolean };
 }
 
 /**
@@ -196,9 +202,9 @@ function scoreRecipe(
   uses: number,
 ): number | null {
   const lowerIngredients = recipe.ingredients.map((i) => i.toLowerCase());
-  const isDisliked = dislikedFoods.some((d) =>
-    lowerIngredients.some((i) => i.includes(d.toLowerCase())),
-  );
+  const isDisliked =
+    recipe.preferenceHit?.disliked ??
+    dislikedFoods.some((d) => lowerIngredients.some((i) => i.includes(d.toLowerCase())));
   if (isDisliked) return null;
   if (!recipe.mealSlots.includes(target.slot)) return null;
 
@@ -217,9 +223,9 @@ function scoreRecipe(
 
   let score = -profileDiff;
 
-  const likedMatch = likedFoods.some((l) =>
-    lowerIngredients.some((i) => i.includes(l.toLowerCase())),
-  );
+  const likedMatch =
+    recipe.preferenceHit?.liked ??
+    likedFoods.some((l) => lowerIngredients.some((i) => i.includes(l.toLowerCase())));
   if (likedMatch) score += 0.5;
   if (recipe.isTrending) score += 0.2;
   score -= repetitionPenalty(uses);

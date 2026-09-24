@@ -14,6 +14,10 @@ vi.mock("../db", () => ({
     profile: { findMany: (...args: unknown[]) => profileFindMany(...args) },
     logEntry: { findMany: (...args: unknown[]) => logEntryFindMany(...args) },
     recipe: { findMany: (...args: unknown[]) => recipeFindMany(...args) },
+    // Kein Food-Katalog und keine strukturierten Zutaten: die Präferenz-Auflösung fällt auf den Textabgleich zurück.
+    ingredient: { findMany: async () => [] },
+    ingredientAlternative: { findMany: async () => [] },
+    recipeIngredient: { findMany: async () => [] },
     pantryItem: { findMany: (...args: unknown[]) => pantryItemFindMany(...args) },
     foodBudget: { findMany: (...args: unknown[]) => foodBudgetFindMany(...args) },
     foodExpense: { findMany: (...args: unknown[]) => foodExpenseFindMany(...args) },

@@ -20,7 +20,10 @@ vi.mock("../db", () => ({
     ingredient: {
       findUnique: (...args: unknown[]) => ingredientFindUnique(...args),
       create: (...args: unknown[]) => ingredientCreate(...args),
+      // Leerer Food-Katalog: findOrCreateIngredient löst dann nichts kanonisch auf (Verhalten dieser Tests unverändert).
+      findMany: async () => [],
     },
+    ingredientAlternative: { findMany: async () => [] },
   },
 }));
 

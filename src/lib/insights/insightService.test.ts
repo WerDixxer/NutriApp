@@ -15,6 +15,9 @@ vi.mock("../db", () => ({
     mealPlanDay: { findMany: (...args: unknown[]) => mealPlanDayFindMany(...args) },
     recipe: { findMany: (...args: unknown[]) => recipeFindMany(...args) },
     dismissedInsight: { findMany: (...args: unknown[]) => dismissedInsightFindMany(...args) },
+    // Leerer Food-Katalog (Food-ID-Abgleich ist in enrichment.test.ts abgedeckt).
+    ingredient: { findMany: async () => [] },
+    ingredientAlternative: { findMany: async () => [] },
   },
 }));
 

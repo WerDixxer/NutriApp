@@ -322,6 +322,9 @@ model Recipe {
   logEntries    LogEntry[]
   mealPlanItems MealPlanItem[]
   mealPlanMeals MealPlanMeal[]
+
+  // Gesetzt nur für Rezepte, die über den Import-Publish (Kapitel 21) entstanden sind.
+  importCandidate RecipeImportCandidate?
 }
 
 // Strukturierte Zutat eines Rezepts: verweist auf die zentrale Food-Entität
@@ -348,6 +351,78 @@ model RecipeIngredient {
 
   @@index([recipeId])
   @@index([foodId])
+}
+
+// ---- Recipe Import Queue (Kapitel 21) ----
+
+// Ein extern importiertes Rezept, das intern geprüft wird, bevor es (vielleicht) Teil des
+// Katalogs wird. Rohdaten (`rawPayload`, unverändert wie von der Quelle geliefert) und
+// normalisierte Daten (`ingredients` usw., Ergebnis der Kapitel-20-Pipeline) liegen bewusst
+// getrennt. Bewertungen (Validierung, Nährwerte, Duplikate, Quality) werden NICHT gespeichert,
+// sondern bei jedem Laden neu aus diesen Daten berechnet - sie können also nie veralten.
+// Ein Katalog-Rezept entsteht ausschließlich über die explizite Publish-Aktion
+// (src/lib/recipes/importQueueService.ts), danach verweist `publishedRecipeId` darauf.
+model RecipeImportCandidate {
+  id String @id @default(cuid())
+
+  sourceType       String // mock|manual|external_api|social_media (ImportSource.type)
+  sourceProvider   String // lesbarer Name der Quelle (ImportSource.label), Teil der Quellen-Identität
+  sourceExternalId String?
+  sourceUrl        String?
+
+  name        String
+  description String @default("")
+
+  rawPayload String // JSON: der vollständige RawImportedRecipe, unverändert
+
+  ingredients  String   // JSON: StoredImportIngredient[] (normalisiert, inkl. Originaltext und Food-Auflösung)
+  instructions String   @default("[]") // JSON-Array
+  servings     Int
+  prepTimeMin  Int?
+  tags         String   @default("[]") // JSON-Array, wie von der Quelle geliefert
+  imageRef     String?
+  importedAt   DateTime
+
+  // pending_review|needs_changes|approved|rejected|published|failed, siehe importWorkflow.ts
+  status String @default("pending_review")
+
+  // Reviewer-Entscheidung beim Approve: IDs der möglichen Duplikate, die bewusst in Kauf genommen
+  // wurden. Der Publish prüft, dass seitdem keine weiteren hinzugekommen sind.
+  acknowledgedDuplicateIds String @default("[]")
+
+  publishedRecipe   Recipe? @relation(fields: [publishedRecipeId], references: [id], onDelete: SetNull)
+  publishedRecipeId String? @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events RecipeImportEvent[]
+
+  // Verhindert eine doppelte Queue-Anlage bei verlässlicher Quellen-ID. SQLite behandelt NULL in
+  // Unique-Indizes als verschieden: ohne externe ID wird bewusst NICHT dedupliziert (nie nur über Namen).
+  @@unique([sourceType, sourceProvider, sourceExternalId])
+  @@index([status])
+}
+
+// Audit Trail je Kandidat: jede Statusänderung, Food-Zuordnung und jedes Publish-Ergebnis.
+// `actorUserId` bewusst ohne Relation zu User: der Eintrag soll auch nach dem Löschen eines Users
+// nachvollziehbar bleiben. Keine E-Mail oder andere personenbezogenen Daten.
+model RecipeImportEvent {
+  id          String                @id @default(cuid())
+  candidate   RecipeImportCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  candidateId String
+
+  action      String  // imported|needs_changes|resubmitted|rejected|approved|food_assigned|published|publish_blocked|publish_error
+  fromStatus  String?
+  toStatus    String
+  note        String?
+  actorUserId String?
+  recipeId    String? // bei "published": das erstellte Katalog-Rezept
+  details     String? // JSON mit strukturierten Zusatzdaten (z.B. Blocker, Food-Zuordnung)
+
+  createdAt DateTime @default(now())
+
+  @@index([candidateId])
 }
 
 enum AssistantRole {

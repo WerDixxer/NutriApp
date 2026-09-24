@@ -8,7 +8,10 @@ vi.mock("../db", () => ({
     ingredient: {
       findUnique: (...args: unknown[]) => ingredientFindUnique(...args),
       create: (...args: unknown[]) => ingredientCreate(...args),
+      // Leerer Food-Katalog: die Tests unten prüfen den Pfad "kein kuratiertes Food" unverändert.
+      findMany: async () => [],
     },
+    ingredientAlternative: { findMany: async () => [] },
   },
 }));
 

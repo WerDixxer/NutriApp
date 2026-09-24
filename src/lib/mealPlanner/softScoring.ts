@@ -1,4 +1,6 @@
 import { closeness, ingredientListIncludes, macroProfile } from "../foodMatching";
+import { recipeUsesPantryIngredient } from "../pantry/pantryFoods";
+import { isDislikedHit, isLikedHit, type FoodPreferenceContext } from "../recipes/foodPreferences";
 import { scoreFiber, type FactorResult } from "../agents/decision/softScoring";
 import type { SearchableRecipe } from "../agents/recipeSearch";
 import type { SlotTarget } from "./types";
@@ -30,8 +32,12 @@ export interface MealSlotScoringContext {
   slotTarget: SlotTarget;
   likedFoods: string[];
   dislikedFoods: string[];
+  /** Gemeinsame Auflösung von Lieblingen/Abneigungen über den Food-Katalog; ohne sie gilt der Textabgleich über die Labels oben. */
+  foodPreferences?: FoodPreferenceContext;
   availablePantryIngredientNames: string[];
   urgentPantryIngredientNames: string[];
+  /** Pantry-Name -> zentrale Food-IDs (pantry/pantryFoods.ts). Fehlt ein Name, gilt der Textabgleich. */
+  pantryFoodIdsByName?: ReadonlyMap<string, readonly string[]>;
   /** null = kein aktives Budget für den Haushalt, siehe budget/budgetContext.ts. */
   remainingBudgetCents: number | null;
   /** Kombiniert historische Logs (recentRecipeCounts) und bereits im laufenden Plan verwendete Rezepte. */
@@ -90,7 +96,7 @@ export function scorePantry(candidate: SearchableRecipe, ctx: MealSlotScoringCon
   if (ctx.availablePantryIngredientNames.length === 0) {
     return { factor: "pantry", weight: MEAL_PLAN_WEIGHTS.pantry, rawScore: 0, weightedScore: 0 };
   }
-  const matches = ctx.availablePantryIngredientNames.filter((ing) => ingredientListIncludes(candidate.ingredients, ing));
+  const matches = ctx.availablePantryIngredientNames.filter((ing) => recipeUsesPantryIngredient(candidate, ing, ctx.pantryFoodIdsByName));
   const rawScore = matches.length > 0 ? Math.min(1, matches.length / 3) : 0;
   return {
     factor: "pantry",
@@ -106,7 +112,7 @@ export function scoreFoodWaste(candidate: SearchableRecipe, ctx: MealSlotScoring
   if (ctx.urgentPantryIngredientNames.length === 0) {
     return { factor: "foodWaste", weight: MEAL_PLAN_WEIGHTS.foodWaste, rawScore: 0, weightedScore: 0 };
   }
-  const matches = ctx.urgentPantryIngredientNames.filter((ing) => ingredientListIncludes(candidate.ingredients, ing));
+  const matches = ctx.urgentPantryIngredientNames.filter((ing) => recipeUsesPantryIngredient(candidate, ing, ctx.pantryFoodIdsByName));
   const rawScore = matches.length > 0 ? 1 : 0;
   return {
     factor: "foodWaste",
@@ -140,8 +146,10 @@ export function scorePrepTime(candidate: SearchableRecipe, maxCookingTimeMin?: n
 }
 
 export function scorePreferences(candidate: SearchableRecipe, ctx: MealSlotScoringContext): FactorResult {
-  const likedHit = ctx.likedFoods.some((f) => ingredientListIncludes(candidate.ingredients, f));
-  const dislikedHit = ctx.dislikedFoods.some((f) => ingredientListIncludes(candidate.ingredients, f));
+  // Gemeinsame Food-Auflösung, wenn vorhanden (recipes/foodPreferences.ts), sonst Textabgleich wie bisher.
+  const match = ctx.foodPreferences?.matchFor(candidate);
+  const likedHit = match ? isLikedHit(match) : ctx.likedFoods.some((f) => ingredientListIncludes(candidate.ingredients, f));
+  const dislikedHit = match ? isDislikedHit(match) : ctx.dislikedFoods.some((f) => ingredientListIncludes(candidate.ingredients, f));
   let rawScore = 0;
   if (likedHit) rawScore += 0.7;
   if (dislikedHit) rawScore -= 0.7;

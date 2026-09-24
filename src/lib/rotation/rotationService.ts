@@ -1,4 +1,6 @@
 import { prisma } from "../db";
+import { buildPantryFoodIdsByName } from "../pantry/pantryFoods";
+import type { FoodCatalog } from "../recipes/catalog";
 import { pantryItemToRotationInput } from "./pantryMapping";
 import { groupRotationResultsForDisplay, prioritizePantryItems } from "./rotationEngine";
 import type { RotationResult } from "./types";
@@ -25,6 +27,11 @@ export interface HouseholdPantryContext {
   availableIngredientNames: string[];
   /** Teilmenge davon mit CRITICAL/HIGH Rotation-Dringlichkeit. */
   urgentIngredientNames: string[];
+  /**
+   * Pantry-Name -> zentrale Food-IDs (siehe pantry/pantryFoods.ts). Nur gesetzt, wenn ein
+   * Food-Katalog übergeben wurde; Namen freier/unbekannter Zutaten fehlen (Textabgleich).
+   */
+  foodIdsByName?: Map<string, string[]>;
 }
 
 /**
@@ -33,7 +40,11 @@ export interface HouseholdPantryContext {
  * (neuer Food-Waste-Faktor, Kapitel 7), statt zwei getrennte Abfragen zu
  * duplizieren. Ersetzt das frühere `getAvailablePantryIngredientNames()`.
  */
-export async function getPantryContextForHousehold(householdId: string, now: Date = new Date()): Promise<HouseholdPantryContext> {
+export async function getPantryContextForHousehold(
+  householdId: string,
+  now: Date = new Date(),
+  catalog?: FoodCatalog,
+): Promise<HouseholdPantryContext> {
   const items = await prisma.pantryItem.findMany({ where: { householdId, remainingQuantity: { gt: 0 } } });
   const results = prioritizePantryItems(items.map(pantryItemToRotationInput), now);
   const urgentIds = new Set(
@@ -43,5 +54,6 @@ export async function getPantryContextForHousehold(householdId: string, now: Dat
   return {
     availableIngredientNames: items.map((i) => i.name),
     urgentIngredientNames: items.filter((i) => urgentIds.has(i.id)).map((i) => i.name),
+    ...(catalog ? { foodIdsByName: buildPantryFoodIdsByName(items, catalog) } : {}),
   };
 }

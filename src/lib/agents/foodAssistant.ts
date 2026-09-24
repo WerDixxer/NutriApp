@@ -10,6 +10,7 @@ import { getDecisionEngine } from "./decisionEngine";
 import { getMacroRescueEngine } from "./macroRescueEngine";
 import { transformRecipe } from "./recipeTransformer";
 import { getOrGenerateDayPlan } from "../generateMealPlan";
+import { attachStructuredIngredients, loadFoodCatalog } from "../recipes/recipeService";
 
 /**
  * System-Prompt nur noch für die freie Text-Antwort (ANSWER_QUESTION/OTHER).
@@ -79,7 +80,12 @@ async function runSearchRecipesTask(profileId: string, query: AssistantQuery): P
     excludedIngredients: [...(query.excludedIngredients ?? []), ...profile.dislikedFoods.map((d) => d.label)],
   });
 
-  const matches = searchRecipes(nutritionQuery, dbRecipes.map(dbRecipeToSearchable), 5);
+  // Ausgeschlossene Zutaten (auch die Abneigungen des Profils) über die gemeinsame Food-Auflösung.
+  const [catalog, candidates] = await Promise.all([
+    loadFoodCatalog(),
+    attachStructuredIngredients(dbRecipes.map(dbRecipeToSearchable)),
+  ]);
+  const matches = searchRecipes(nutritionQuery, candidates, 5, catalog);
   const recipes = matches.map((m) => dbRecipeToDetail(dbById.get(m.recipe.id)!));
 
   const resultText =

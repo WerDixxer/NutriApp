@@ -120,6 +120,59 @@ export function buildRecipes(catalog: FoodCatalog = buildSeedCatalog()): BuiltRe
 }
 
 /**
+ * Die `Recipe`-Spalten eines gebauten Rezepts. EINE Abbildung für den Seed (prisma/seedRecipes.ts)
+ * und den Import-Publish (Kapitel 21), damit beide Wege dieselben abgeleiteten Felder schreiben.
+ * Slug und Herkunft (`sourceType`/`sourceProvider`/`sourceExternalId`) setzt der Aufrufer.
+ */
+export function recipeRowData(r: BuiltRecipe) {
+  return {
+    name: r.name,
+    description: r.description,
+    imageQuery: r.imageQuery,
+    kcal: r.nutrition.kcal,
+    proteinG: r.nutrition.proteinG,
+    carbsG: r.nutrition.carbsG,
+    fatG: r.nutrition.fatG,
+    fiberG: r.nutrition.fiberG,
+    sugarG: r.nutrition.sugarG,
+    saturatedFatG: r.nutrition.saturatedFatG,
+    sodiumMg: r.nutrition.sodiumMg,
+    nutritionSource: "COMPUTED",
+    prepTimeMin: r.prepTimeMin,
+    cookTimeMin: r.cookTimeMin as number | null,
+    totalTimeMin: r.totalTimeMin,
+    difficulty: r.difficulty,
+    category: r.category,
+    cuisine: r.cuisine,
+    equipment: JSON.stringify(r.equipment),
+    servings: r.servings,
+    mealSlots: JSON.stringify(r.mealSlots),
+    dietTypes: JSON.stringify(r.dietTypes),
+    allergens: JSON.stringify(r.allergens),
+    ingredients: JSON.stringify(r.ingredientLines),
+    instructions: JSON.stringify(r.instructions),
+    tags: JSON.stringify(r.tags),
+    mealPrepSuitable: r.mealPrepSuitable,
+    storageDays: r.storageDays,
+    storage: r.storage,
+  };
+}
+
+/** Eine `RecipeIngredient`-Zeile; `foodId` ist die Datenbank-ID des Foods (beim Seed aus dem Slug aufgelöst). */
+export function recipeIngredientRowData(ingredient: StructuredIngredient, position: number, foodId: string) {
+  return {
+    position,
+    foodId,
+    displayName: ingredient.displayName,
+    amount: ingredient.amount,
+    unit: ingredient.unit,
+    optional: ingredient.optional,
+    note: ingredient.note ?? null,
+    gramsOverride: ingredient.gramsOverride ?? null,
+  };
+}
+
+/**
  * Strukturelle Prüfung der Seed-Daten (Referenzen, Eindeutigkeit, Tags).
  * Gibt eine Liste lesbarer Probleme zurück; leer = konsistent. Das Seed-Skript
  * bricht bei Problemen ab, damit keine kaputten Referenzen in die DB gelangen.

@@ -38,11 +38,23 @@ let createdDates: number[] = [];
 let recipes: FakeRecipe[] = [];
 let profile: Record<string, unknown> = {};
 let idCounter = 0;
+// Food-Katalog und strukturierte Zutaten (Standard: leer -> Textabgleich wie bei Altrezepten).
+let foods: Record<string, unknown>[] = [];
+let alternatives: Record<string, unknown>[] = [];
+let recipeRows: { recipeId: string; position: number; foodId: string; displayName: string }[] = [];
 
 vi.mock("./db", () => ({
   prisma: {
     profile: { findUniqueOrThrow: async () => profile },
     recipe: { findMany: async () => recipes },
+    ingredient: { findMany: async () => foods },
+    ingredientAlternative: { findMany: async () => alternatives },
+    recipeIngredient: {
+      findMany: async ({ where }: { where: { recipeId: { in: string[] } } }) =>
+        recipeRows
+          .filter((row) => where.recipeId.in.includes(row.recipeId))
+          .map((row) => ({ id: `${row.recipeId}-${row.position}`, amount: 100, unit: "g", optional: false, note: null, gramsOverride: null, ...row })),
+    },
     mealPlanDay: {
       findUnique: async ({ where }: { where: { profileId_date: { profileId: string; date: Date } } }) =>
         store.find((d) => d.profileId === where.profileId_date.profileId && d.date.getTime() === where.profileId_date.date.getTime()) ?? null,
@@ -125,6 +137,9 @@ beforeEach(() => {
   store = [];
   createdDates = [];
   idCounter = 0;
+  foods = [];
+  alternatives = [];
+  recipeRows = [];
   profile = baseProfile();
   recipes = [
     ...recipesFor("BREAKFAST", "b", 7),
@@ -341,5 +356,119 @@ describe("bereits gespeicherte Tage", () => {
     const monday = await getOrGenerateDayPlan(PROFILE_ID, MONDAY);
 
     expect(monday.items.find((i) => i.slot === "BREAKFAST")!.recipeId).toBe("b1");
+  });
+});
+
+function foodRow(slug: string, name: string, aliases: string[] = [], allergens: string[] = []) {
+  return {
+    id: `food-${slug}`,
+    name,
+    normalizedName: name.toLowerCase(),
+    slug,
+    category: "misc",
+    dietClass: "omnivore",
+    aliases: JSON.stringify(aliases),
+    allergens: JSON.stringify(allergens),
+    negligible: false,
+    unitGrams: null,
+    kcalPer100: 100,
+    proteinPer100G: 5,
+    carbsPer100G: 10,
+    fatPer100G: 2,
+    fiberPer100G: 1,
+    sugarPer100G: 1,
+    saturatedFatPer100G: 0.5,
+    sodiumPer100Mg: 10,
+  };
+}
+
+describe("Allergien im persönlichen Plan (Regression: 'Erdnüsse' vs. Allergen 'erdnuss')", () => {
+  const peanutLunch = () =>
+    fakeRecipe("l-erdnuss", "LUNCH", {
+      allergens: JSON.stringify(["erdnuss", "gluten"]),
+      ingredients: JSON.stringify(["50 g Erdnussbutter"]),
+    });
+
+  beforeEach(() => {
+    // Das Erdnuss-Rezept würde ohne Allergie klar gewinnen (Lieblingszutat, +0.5).
+    recipes = [...recipesFor("BREAKFAST", "b", 7), ...recipesFor("SNACK", "s", 7), ...recipesFor("DINNER", "d", 7), peanutLunch(), fakeRecipe("l-sicher", "LUNCH")];
+  });
+
+  it("Kontrolle: ohne Allergie wird das Erdnuss-Rezept gewählt", async () => {
+    profile = baseProfile({ likedFoods: [{ label: "Erdnussbutter" }] });
+    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    expect(slotRecipeIds(plans, "LUNCH")).toContain("l-erdnuss");
+  });
+
+  it("Allergie 'Erdnüsse' sperrt das Rezept mit Allergen 'erdnuss' an jedem Tag der Woche", async () => {
+    profile = baseProfile({ allergies: [{ label: "Erdnüsse" }], likedFoods: [{ label: "Erdnussbutter" }] });
+    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    expect(slotRecipeIds(plans, "LUNCH")).toEqual(Array(7).fill("l-sicher"));
+  });
+
+  it.each(["Erdnuss", "erdnüsse", "Erdnuss-Allergie", "Nüsse"])("sperrt auch bei der Angabe '%s'", async (label) => {
+    profile = baseProfile({ allergies: [{ label }], likedFoods: [{ label: "Erdnussbutter" }] });
+    const plans = await getOrGenerateDayPlan(PROFILE_ID, MONDAY, new Map());
+    expect(plans.items.some((i) => i.recipeId === "l-erdnuss")).toBe(false);
+  });
+
+  it("lässt bei einer unbekannten Allergie ein Rezept mit dem Begriff in den Zutaten nicht durch", async () => {
+    recipes = [
+      ...recipes.filter((r) => !r.id.startsWith("l-")),
+      fakeRecipe("l-sellerie", "LUNCH", { ingredients: JSON.stringify(["100 g Sellerie"]) }),
+      fakeRecipe("l-sicher", "LUNCH"),
+    ];
+    profile = baseProfile({ allergies: [{ label: "Sellerie" }], likedFoods: [{ label: "Sellerie" }] });
+    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    expect(slotRecipeIds(plans, "LUNCH")).toEqual(Array(7).fill("l-sicher"));
+  });
+});
+
+describe("Lieblinge und Abneigungen über die gemeinsame Food-Auflösung", () => {
+  it("Abneigung 'Reis' sperrt das Reisrezept, nicht die Reiswaffeln; das Altrezept bleibt beim Textabgleich", async () => {
+    foods = [foodRow("reis", "Reis", ["basmatireis"]), foodRow("reiswaffeln", "Reiswaffeln", ["reiswaffel"])];
+    recipes = [
+      ...recipes.filter((r) => !r.id.startsWith("l")),
+      fakeRecipe("l-reis", "LUNCH", { ingredients: JSON.stringify(["75 g Reis"]) }),
+      fakeRecipe("l-waffeln", "LUNCH", { ingredients: JSON.stringify(["3 Reiswaffeln"]) }),
+      fakeRecipe("l-altrezept", "LUNCH", { ingredients: JSON.stringify(["100 g Basmatireis"]) }), // ohne strukturierte Zutaten
+    ];
+    // Die übrigen Slots haben Rezepte mit "Reis" im Text: hier interessiert nur das Mittagessen.
+    recipeRows = [
+      { recipeId: "l-reis", position: 0, foodId: "food-reis", displayName: "Reis" },
+      { recipeId: "l-waffeln", position: 0, foodId: "food-reiswaffeln", displayName: "Reiswaffeln" },
+    ];
+    profile = baseProfile({ dislikedFoods: [{ label: "Reis" }] });
+
+    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+
+    expect(new Set(slotRecipeIds(plans, "LUNCH"))).toEqual(new Set(["l-waffeln"]));
+  });
+
+  it("Lieblingsfood 'Hähnchen' trifft über den Alias auch ein strukturiertes Rezept mit 'Poulet' im Text", async () => {
+    foods = [foodRow("haehnchenbrust", "Hähnchenbrust", ["hähnchen", "poulet"])];
+    recipes = [
+      ...recipes.filter((r) => !r.id.startsWith("l")),
+      fakeRecipe("l-poulet", "LUNCH", { ingredients: JSON.stringify(["150 g Poulet"]) }),
+      fakeRecipe("l-kichererbsen", "LUNCH", { ingredients: JSON.stringify(["150 g Kichererbsen"]) }),
+    ];
+    recipeRows = [{ recipeId: "l-poulet", position: 0, foodId: "food-haehnchenbrust", displayName: "Poulet" }];
+    profile = baseProfile({ likedFoods: [{ label: "Hähnchen" }] });
+
+    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+
+    // +0.5 (Lieblingsfood) bleibt vor dem Wiederholungsabschlag von höchstens 0.3.
+    expect(slotRecipeIds(plans, "LUNCH")).toEqual(Array(7).fill("l-poulet"));
+  });
+
+  it("ein unbekanntes Label erzeugt keinen Treffer aus dem Nichts", async () => {
+    foods = [foodRow("reis", "Reis")];
+    recipes = [...recipes.filter((r) => !r.id.startsWith("l")), fakeRecipe("l-a", "LUNCH"), fakeRecipe("l-b", "LUNCH", { ingredients: JSON.stringify(["100 g Kichererbsen"]) })];
+    profile = baseProfile({ likedFoods: [{ label: "Trüffel" }] });
+
+    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+
+    // Beide Rezepte sind gleich bewertet: sie wechseln sich ab, keines wird wegen "Trüffel" bevorzugt.
+    expect(slotRecipeIds(plans, "LUNCH").slice(0, 4)).toEqual(["l-a", "l-b", "l-a", "l-b"]);
   });
 });

@@ -1,17 +1,21 @@
+import { recipeBlockedByAllergies } from "./recipes/allergens";
+
 /**
  * Gemeinsame, deterministische Matching-Bausteine für Essensplaner UND
  * Food-Assistant-Tools (recipeSearch.ts). Bewusst zentral, damit "passt zur
  * Allergie" / "passt zum Makro-Ziel" überall gleich funktioniert.
  */
 
-export function matchesAllergen(recipeAllergens: string[], profileAllergies: string[]): boolean {
-  return profileAllergies.some((allergy) =>
-    recipeAllergens.some(
-      (a) =>
-        a.toLowerCase().includes(allergy.toLowerCase()) ||
-        allergy.toLowerCase().includes(a.toLowerCase()),
-    ),
-  );
+/**
+ * Sperrt das Rezept wegen der Allergien des Nutzers? Läuft über die zentrale
+ * Auflösung in recipes/allergens.ts (Nutzer-Freitext -> kanonisches Allergen),
+ * NICHT über Teilstring-Vergleiche: "Erdnüsse" muss das Rezept-Allergen
+ * "erdnuss" treffen. `ingredientLines` (optional) erlaubt für Begriffe, die
+ * nicht im Allergen-Vokabular stehen, einen Textabgleich gegen die Zutaten,
+ * damit ein unbekanntes Allergen nie als sicher durchgeht.
+ */
+export function matchesAllergen(recipeAllergens: string[], profileAllergies: string[], ingredientLines: string[] = []): boolean {
+  return recipeBlockedByAllergies(recipeAllergens, profileAllergies, ingredientLines);
 }
 
 /** Enthält eine der Zutaten-Zeilen den gesuchten Begriff (z.B. "gurke" in "2 Salatgurken")? */

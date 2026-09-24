@@ -1,5 +1,7 @@
 import type { DietType, MealSlot } from "@prisma/client";
-import { ingredientListIncludes, macroProfile, matchesAllergen } from "../foodMatching";
+import { ingredientListIncludes, macroProfile, matchesAllergen } from "../foodMatching";import type { FoodCatalog } from "../recipes/catalog";
+import { conflictingLabels } from "../recipes/foodPreferences";
+import type { StructuredIngredient } from "../recipes/types";
 
 /**
  * Strukturierte Parameter, in die der Food Assistant natürliche Sprache
@@ -35,6 +37,8 @@ export interface SearchableRecipe {
   dietTypes: DietType[];
   allergens: string[];
   ingredients: string[];
+  /** Strukturierte Zutaten (nur Katalogrezepte); fehlen sie, gilt der Text in `ingredients`. */
+  structured?: StructuredIngredient[];
   tags: string[];
   isTrending: boolean;
 }
@@ -98,6 +102,7 @@ export function searchRecipes(
   query: NutritionQuery,
   candidates: SearchableRecipe[],
   limit = 5,
+  catalog?: FoodCatalog,
 ): RecipeMatch[] {
   const targetSlot = resolveMealSlot(query.mealType);
   const hardDietTypes = (query.dietaryPreferences ?? [])
@@ -107,10 +112,12 @@ export function searchRecipes(
   const filtered = candidates.filter((r) => {
     if (targetSlot && !r.mealSlots.includes(targetSlot)) return false;
     if (query.maxPreparationTimeMin && r.prepTimeMin > query.maxPreparationTimeMin) return false;
-    if (matchesAllergen(r.allergens, query.allergies ?? [])) return false;
-    if ((query.excludedIngredients ?? []).some((ex) => ingredientListIncludes(r.ingredients, ex))) {
-      return false;
-    }
+    if (matchesAllergen(r.allergens, query.allergies ?? [], r.ingredients)) return false;
+    const excluded = query.excludedIngredients ?? [];
+    const hitsExcluded = catalog
+      ? conflictingLabels(r, excluded, catalog).length > 0
+      : excluded.some((ex) => ingredientListIncludes(r.ingredients, ex));
+    if (hitsExcluded) return false;
     if (hardDietTypes.length > 0 && !hardDietTypes.every((d) => r.dietTypes.includes(d))) {
       return false;
     }

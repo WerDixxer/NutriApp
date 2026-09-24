@@ -2,6 +2,9 @@ import type { MealSlot } from "@prisma/client";
 import { prisma } from "./db";
 import { calcFullTargets } from "./nutrition";
 import { matchesAllergen } from "./foodMatching";
+import { createFoodPreferenceContext, isDislikedHit, isLikedHit, type FoodPreferenceContext } from "./recipes/foodPreferences";
+import { loadFoodCatalog, loadStructuredIngredients } from "./recipes/recipeService";
+import type { StructuredIngredient } from "./recipes/types";
 import {
   MAX_VARIETY_ACCURACY_LOSS,
   buildDayPlan,
@@ -114,18 +117,30 @@ export async function getOrGenerateDayPlan(profileId: string, date: Date, weekUs
   const dislikedLabels = profile.dislikedFoods.map((d) => d.label);
   const likedLabels = profile.likedFoods.map((l) => l.label);
 
+  // Allergien sind ein harter Ausschluss (gemeinsame Auflösung, siehe recipes/allergens.ts).
   const compatibleRecipes = allRecipes.filter((r) => {
     const dietTypes = JSON.parse(r.dietTypes) as string[];
     const allergens = JSON.parse(r.allergens) as string[];
     if (!dietTypes.includes(profile.dietType)) return false;
-    if (matchesAllergen(allergens, allergyLabels)) return false;
+    if (matchesAllergen(allergens, allergyLabels, JSON.parse(r.ingredients) as string[])) return false;
     return true;
   });
+
+  // Lieblinge/Abneigungen über die gemeinsame Food-Auflösung (Katalog für strukturierte
+  // Rezepte, Text für Altrezepte). Nur laden, wenn es überhaupt Präferenzen gibt.
+  let preferences: FoodPreferenceContext | null = null;
+  let structuredByRecipe = new Map<string, StructuredIngredient[]>();
+  if (likedLabels.length + dislikedLabels.length > 0) {
+    const [catalog, structured] = await Promise.all([loadFoodCatalog(), loadStructuredIngredients(compatibleRecipes.map((r) => r.id))]);
+    preferences = createFoodPreferenceContext({ favoriteFoods: likedLabels, dislikedFoods: dislikedLabels }, catalog);
+    structuredByRecipe = structured;
+  }
 
   const candidatesBySlot = new Map<MealSlot, RecipeCandidate[]>();
   for (const r of compatibleRecipes) {
     const mealSlots = JSON.parse(r.mealSlots) as MealSlot[];
     const ingredients = JSON.parse(r.ingredients) as string[];
+    const match = preferences?.matchFor({ id: r.id, ingredients, structured: structuredByRecipe.get(r.id) });
     const candidate: RecipeCandidate = {
       id: r.id,
       name: r.name,
@@ -136,6 +151,7 @@ export async function getOrGenerateDayPlan(profileId: string, date: Date, weekUs
       mealSlots,
       ingredients,
       isTrending: r.isTrending,
+      ...(match ? { preferenceHit: { liked: isLikedHit(match), disliked: isDislikedHit(match) } } : {}),
     };
     for (const slot of mealSlots) {
       if (!candidatesBySlot.has(slot)) candidatesBySlot.set(slot, []);

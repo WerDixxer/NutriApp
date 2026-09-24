@@ -9,6 +9,8 @@ import { selectBestCandidate, type RejectedCandidate } from "./decision/selectBe
 import { VARIETY_WINDOW_DAYS, type ScoringContext } from "./decision/softScoring";
 import type { HardConstraintContext } from "./decision/hardConstraints";
 import type { AssistantQuery } from "./assistantQuery";
+import { createFoodPreferenceContext } from "../recipes/foodPreferences";
+import { attachStructuredIngredients, loadFoodCatalog } from "../recipes/recipeService";
 
 export interface DecisionEngineInput {
   profileId: string;
@@ -98,7 +100,14 @@ export class MultiFactorDecisionEngine implements DecisionEngine {
     const dbRecipes = await prisma.recipe.findMany({
       where: { OR: [{ isCustom: false }, { ownerProfileId: input.profileId }] },
     });
-    const candidates = dbRecipes.map(dbRecipeToSearchable);
+    const [catalog, candidates] = await Promise.all([
+      loadFoodCatalog(),
+      attachStructuredIngredients(dbRecipes.map(dbRecipeToSearchable)),
+    ]);
+    const foodPreferences = createFoodPreferenceContext(
+      { favoriteFoods: profile.likedFoods.map((l) => l.label), dislikedFoods: profile.dislikedFoods.map((d) => d.label) },
+      catalog,
+    );
 
     const [targets, recentRecipeCounts, householdId] = await Promise.all([
       resolveTargets(input.profileId, input.query, input.now),
@@ -112,13 +121,14 @@ export class MultiFactorDecisionEngine implements DecisionEngine {
     // Ohne Haushalt/ohne Pantry-Einträge bleiben beide Listen leer, die
     // Faktoren bleiben neutral (siehe softScoring.ts), nichts wird erfunden.
     const pantryContext = householdId
-      ? await getPantryContextForHousehold(householdId, input.now)
+      ? await getPantryContextForHousehold(householdId, input.now, catalog)
       : { availableIngredientNames: [], urgentIngredientNames: [] };
 
     const hardCtx: HardConstraintContext = {
       allergies: [...(input.query?.allergies ?? []), ...profile.allergies.map((a) => a.label)],
       dietType: profile.dietType,
       excludedIngredients: input.query?.excludedIngredients ?? [],
+      catalog,
     };
 
     const scoringCtx: ScoringContext = {
@@ -130,9 +140,11 @@ export class MultiFactorDecisionEngine implements DecisionEngine {
       availableIngredients: [...(input.query?.ingredients ?? []), ...pantryContext.availableIngredientNames],
       likedFoods: profile.likedFoods.map((l) => l.label),
       dislikedFoods: profile.dislikedFoods.map((d) => d.label),
+      foodPreferences,
       preferences: input.query?.preferences ?? [],
       recentRecipeCounts,
       urgentPantryIngredientNames: pantryContext.urgentIngredientNames,
+      pantryFoodIdsByName: pantryContext.foodIdsByName,
     };
 
     const selection = selectBestCandidate(candidates, hardCtx, scoringCtx);

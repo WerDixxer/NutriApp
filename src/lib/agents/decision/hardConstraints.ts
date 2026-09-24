@@ -1,5 +1,7 @@
 import type { DietType } from "@prisma/client";
 import { matchesAllergen, ingredientListIncludes } from "../../foodMatching";
+import type { FoodCatalog } from "../../recipes/catalog";
+import { conflictingLabels } from "../../recipes/foodPreferences";
 import type { SearchableRecipe } from "../recipeSearch";
 
 export interface HardConstraintContext {
@@ -8,6 +10,8 @@ export interface HardConstraintContext {
   dietType: DietType;
   /** Explizit in dieser Nachricht ausgeschlossene Zutaten. */
   excludedIngredients: string[];
+  /** Food-Katalog für die Auflösung ausgeschlossener Zutaten; ohne ihn bleibt es beim Textabgleich. */
+  catalog?: FoodCatalog;
 }
 
 export type HardConstraintName = "allergies" | "dietaryStyle" | "excludedIngredients";
@@ -29,7 +33,7 @@ export function checkHardConstraints(
 ): HardConstraintViolation[] {
   const violations: HardConstraintViolation[] = [];
 
-  if (ctx.allergies.length > 0 && matchesAllergen(candidate.allergens, ctx.allergies)) {
+  if (ctx.allergies.length > 0 && matchesAllergen(candidate.allergens, ctx.allergies, candidate.ingredients)) {
     violations.push({
       constraint: "allergies",
       detail: `Enthält ein Allergen aus deiner Liste (${ctx.allergies.join(", ")}).`,
@@ -40,7 +44,10 @@ export function checkHardConstraints(
     violations.push({ constraint: "dietaryStyle", detail: "Passt nicht zu deiner Ernährungsform." });
   }
 
-  const hitExcluded = ctx.excludedIngredients.filter((term) => ingredientListIncludes(candidate.ingredients, term));
+  // Mit Food-Katalog: strukturierte Rezepte über Food-IDs (Alias-Auflösung), sonst Textabgleich.
+  const hitExcluded = ctx.catalog
+    ? conflictingLabels(candidate, ctx.excludedIngredients, ctx.catalog)
+    : ctx.excludedIngredients.filter((term) => ingredientListIncludes(candidate.ingredients, term));
   if (hitExcluded.length > 0) {
     violations.push({
       constraint: "excludedIngredients",

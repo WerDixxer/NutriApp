@@ -1,8 +1,8 @@
 import type { PantryUnit } from "@prisma/client";
 import { convertQuantity } from "../pantry/units";
 import { aggregateIngredients, type MealForAggregation } from "../mealPrep/aggregation";
-import { enrichAggregatedIngredients, type PantryItemForMatch } from "../mealPrep/enrichment";
-import { normalizeIngredientKey } from "../mealPrep/ingredientParser";
+import { enrichAggregatedIngredients, pantryItemMatchesIngredient, type PantryItemForMatch } from "../mealPrep/enrichment";
+import type { FoodCatalog } from "../recipes/catalog";
 import type { SourceMealRef } from "../mealPrep/types";
 import type { RotationUrgency } from "../rotation/types";
 
@@ -96,16 +96,17 @@ export function calculateWeeklyShopping(
   meals: MealForAggregation[],
   pantryItems: PantryItemForMatch[],
   urgencyByItemId: Map<string, RotationUrgency> = new Map(),
+  catalog?: FoodCatalog,
 ): WeeklyShoppingCalculation {
   const { aggregated, unparsed } = aggregateIngredients(meals);
-  const enriched = enrichAggregatedIngredients(aggregated, pantryItems, urgencyByItemId, new Map());
+  const enriched = enrichAggregatedIngredients(aggregated, pantryItems, urgencyByItemId, new Map(), catalog);
 
   const items: WeeklyShoppingItem[] = enriched.map((ingredient) => {
     const availableQuantity = ingredient.pantry?.availableQuantity ?? 0;
     const hasIncomparablePantryStock = pantryItems.some(
       (item) =>
         item.remainingQuantity > 0 &&
-        normalizeIngredientKey(item.name) === ingredient.normalizedName &&
+        pantryItemMatchesIngredient(item, ingredient.normalizedName, catalog) &&
         convertQuantity(item.remainingQuantity, item.unit, ingredient.unit) === null,
     );
 

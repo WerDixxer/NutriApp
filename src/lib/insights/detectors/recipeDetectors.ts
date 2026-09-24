@@ -1,5 +1,6 @@
 import { aggregateIngredients, type MealForAggregation } from "../../mealPrep/aggregation";
 import { enrichAggregatedIngredients, type PantryItemForMatch } from "../../mealPrep/enrichment";
+import type { FoodCatalog } from "../../recipes/catalog";
 import type { Insight } from "../types";
 
 export interface RecipeInsightCandidate {
@@ -26,6 +27,7 @@ export function detectRecipesMatchingAvailablePantry(
   pantryItems: PantryItemForMatch[],
   now: Date = new Date(),
   limit = 1,
+  catalog?: FoodCatalog,
 ): Insight[] {
   const matches: { recipeId: string; recipeName: string; ingredientCount: number }[] = [];
 
@@ -42,7 +44,7 @@ export function detectRecipesMatchingAvailablePantry(
     const { aggregated, unparsed } = aggregateIngredients([meal]);
     if (aggregated.length === 0 || unparsed.length > 0) continue;
 
-    const enriched = enrichAggregatedIngredients(aggregated, pantryItems, new Map(), new Map());
+    const enriched = enrichAggregatedIngredients(aggregated, pantryItems, new Map(), new Map(), catalog);
     const fullyCovered = enriched.every((i) => i.pantry && i.pantry.availableQuantity >= i.totalQuantity);
     if (fullyCovered) matches.push({ recipeId: recipe.id, recipeName: recipe.name, ingredientCount: aggregated.length });
   }

@@ -6,6 +6,7 @@ import { enrichAggregatedIngredients, type PantryItemForMatch } from "./enrichme
 import { buildPrepGroups, buildSoloRecipes, type RecipeInfo } from "./batching";
 import { computeMealPrepScore } from "./scoring";
 import { buildSummary } from "./explain";
+import { loadFoodCatalog } from "../recipes/recipeService";
 import { normalizeIngredientKey } from "./ingredientParser";
 import type { KnownPrice } from "../budget/mealCost";
 import type { MealPrepPlan, MealPrepStrategy, MealPrepWarning, MealRef } from "./types";
@@ -38,10 +39,14 @@ export async function analyzeMealPrep(
 
   const { aggregated, unparsed } = aggregateIngredients(meals);
 
-  const [pantryItems, rotation, foodPrices] = await Promise.all([
-    prisma.pantryItem.findMany({ where: { householdId }, select: { id: true, name: true, remainingQuantity: true, unit: true } }),
+  const [pantryItems, rotation, foodPrices, catalog] = await Promise.all([
+    prisma.pantryItem.findMany({
+      where: { householdId },
+      select: { id: true, name: true, ingredientId: true, remainingQuantity: true, unit: true },
+    }),
     getHouseholdRotation(householdId, now),
     prisma.foodPrice.findMany({ where: { householdId }, select: { name: true, priceCents: true, quantity: true, unit: true } }),
+    loadFoodCatalog(),
   ]);
 
   const urgencyByItemId = new Map(rotation.results.map((r) => [r.pantryItemId, r.urgency]));
@@ -49,7 +54,7 @@ export async function analyzeMealPrep(
     foodPrices.map((p) => [normalizeIngredientKey(p.name), { priceCents: p.priceCents, quantity: p.quantity, unit: p.unit }]),
   );
 
-  const enriched = enrichAggregatedIngredients(aggregated, pantryItems as PantryItemForMatch[], urgencyByItemId, priceByKey);
+  const enriched = enrichAggregatedIngredients(aggregated, pantryItems as PantryItemForMatch[], urgencyByItemId, priceByKey, catalog);
 
   const batchable = enriched.filter((i) => i.recipeCount >= 2);
   const { prepGroups } = buildPrepGroups(batchable, strategy);

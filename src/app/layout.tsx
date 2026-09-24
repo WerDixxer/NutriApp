@@ -25,7 +25,7 @@ const mono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Good Order",
+  title: "VYN",
   description: "Dein personalisierter Ernährungs- und Trainings-Coach, ohne Online-Coach-Abo.",
 };
 

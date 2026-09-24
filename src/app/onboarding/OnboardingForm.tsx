@@ -15,6 +15,8 @@ import {
   WEEKDAY_LABELS,
 } from "@/lib/labels";
 import { MAX_RATE_KG_PER_WEEK } from "@/lib/nutrition";
+import { suggestAllergens } from "@/lib/recipes/allergens";
+import { suggestFoods, type SuggestionFood } from "@/lib/recipes/foodSuggestions";
 
 type GoalKey = keyof typeof MAX_RATE_KG_PER_WEEK;
 
@@ -77,10 +79,13 @@ function SectionCard({
 
 const inputClass = inputClassName;
 
-export default function OnboardingForm() {
+export default function OnboardingForm({ foods }: { foods: SuggestionFood[] }) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Lieblinge und Abneigungen teilen sich dieselben Katalog-Vorschläge.
+  const suggestFood = (query: string, selected: string[]) => suggestFoods(foods, query, { exclude: selected });
 
   const [age, setAge] = useState(25);
   const [sex, setSex] = useState("MALE");
@@ -329,6 +334,7 @@ export default function OnboardingForm() {
           <TagInput
             values={likedFoods}
             onChange={setLikedFoods}
+            suggest={suggestFood}
             placeholder="Eingeben + Enter, z.B. Hähnchen, Reis…"
             chipClassName="bg-primary-soft text-primary-dark"
           />
@@ -337,6 +343,7 @@ export default function OnboardingForm() {
           <TagInput
             values={dislikedFoods}
             onChange={setDislikedFoods}
+            suggest={suggestFood}
             placeholder="Eingeben + Enter, z.B. Pilze, Rosenkohl…"
             chipClassName="bg-bg text-ink-soft"
           />
@@ -345,6 +352,7 @@ export default function OnboardingForm() {
           <TagInput
             values={allergies}
             onChange={setAllergies}
+            suggest={(query, selected) => suggestAllergens(query, { exclude: selected })}
             placeholder="Eingeben + Enter, z.B. Nüsse, Laktose…"
             chipClassName="bg-accent-soft text-accent"
           />

@@ -36,7 +36,7 @@ export function TopNav() {
     <header className="sticky top-4 z-30 px-4 sm:px-6">
       <div className="glass-dark shadow-lift mx-auto flex max-w-[1080px] items-center justify-between rounded-full border px-5 py-2.5">
         <Link href="/dashboard" className="pl-1 text-[15px] font-semibold text-on-inverse">
-          Good Order
+          VYN
         </Link>
         <nav className="hidden items-center gap-1 text-[13px] font-medium text-on-inverse-soft lg:flex">
           {NAV_ITEMS.map((item) => {

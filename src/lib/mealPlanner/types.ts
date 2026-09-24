@@ -3,6 +3,7 @@ import type { MacroTarget } from "../nutrition";
 import type { SearchableRecipe } from "../agents/recipeSearch";
 import type { HouseholdPantryContext } from "../rotation/rotationService";
 import type { BudgetContext } from "../budget/budgetContext";
+import type { FoodPreferenceContext } from "../recipes/foodPreferences";
 
 /** Die drei Standard-Slots plus optionaler SNACK, siehe Kapitel-10-Auftrag Abschnitt 3. */
 export const PLANNABLE_MEAL_SLOTS = ["BREAKFAST", "LUNCH", "DINNER", "SNACK"] as const;
@@ -30,6 +31,8 @@ export interface PlanningContext {
   pantry: HouseholdPantryContext;
   budget: BudgetContext;
   candidates: SearchableRecipe[];
+  /** Gemeinsame Food-Auflösung der Lieblinge/Abneigungen ALLER geplanten Mitglieder (recipes/foodPreferences.ts). Ohne sie gilt der Textabgleich. */
+  foodPreferences?: FoodPreferenceContext;
   /** recipeId -> Anzahl Logs der geplanten Mitglieder in den letzten VARIETY_WINDOW_DAYS Tagen (siehe decision/softScoring.ts). */
   recentRecipeCounts: Map<string, number>;
 }

@@ -7,6 +7,7 @@ import { DEFAULT_MACRO_TOLERANCES, type MacroTolerances } from "./macroRescue/to
 import { DEFAULT_MACRO_LOSS_WEIGHTS } from "./macroRescue/lossWeights";
 import type { HardConstraintContext } from "./decision/hardConstraints";
 import type { MacroRescueResult, MacroRescueTargets } from "./macroRescue/types";
+import { attachStructuredIngredients, loadFoodCatalog } from "../recipes/recipeService";
 
 export interface MacroRescueInput {
   profileId: string;
@@ -60,7 +61,11 @@ export class MacroRescueEngine {
     const dbRecipes = await prisma.recipe.findMany({
       where: { OR: [{ isCustom: false }, { ownerProfileId: input.profileId }] },
     });
+    // Ausgeschlossene Zutaten laufen über die gemeinsame Food-Auflösung; ohne solche Angaben ist der Katalog unnötig.
+    const excluded = input.excludedIngredients ?? [];
+    const catalog = excluded.length > 0 ? await loadFoodCatalog() : undefined;
     let candidates = dbRecipes.map(dbRecipeToSearchable);
+    if (catalog) candidates = await attachStructuredIngredients(candidates);
 
     // Mahlzeit-Typ und Zeitlimit sind reine Relevanz-Vorfilter (z.B. "Snack"
     // soll kein Abendessen liefern), keine Hard Constraints im Sinne dieses
@@ -74,7 +79,8 @@ export class MacroRescueEngine {
     const hardCtx: HardConstraintContext = {
       allergies: profile.allergies.map((a) => a.label),
       dietType: profile.dietType,
-      excludedIngredients: input.excludedIngredients ?? [],
+      excludedIngredients: excluded,
+      catalog,
     };
 
     const tolerances: MacroTolerances = { ...DEFAULT_MACRO_TOLERANCES, ...input.tolerances };

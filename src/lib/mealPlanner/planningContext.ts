@@ -4,6 +4,8 @@ import { getPantryContextForHousehold } from "../rotation/rotationService";
 import { getBudgetContextForHousehold } from "../budget/budgetContext";
 import { dbRecipeToSearchable } from "../agents/searchableRecipe";
 import { VARIETY_WINDOW_DAYS } from "../agents/decision/softScoring";
+import { createFoodPreferenceContext } from "../recipes/foodPreferences";
+import { attachStructuredIngredients, loadFoodCatalog } from "../recipes/recipeService";
 import type { PlanningContext, MemberPlanningContext } from "./types";
 
 function startOfDay(date: Date): Date {
@@ -94,14 +96,24 @@ export async function buildPlanningContext(
     });
   }
 
-  const [pantry, budget, dbRecipes] = await Promise.all([
-    getPantryContextForHousehold(householdId, now),
+  const [catalog, budget, dbRecipes] = await Promise.all([
+    loadFoodCatalog(),
     getBudgetContextForHousehold(householdId, now),
     prisma.recipe.findMany({
       where: { OR: [{ isCustom: false }, { ownerProfileId: { in: members.map((m) => m.profileId) } }] },
     }),
   ]);
-  const candidates = dbRecipes.map(dbRecipeToSearchable);
+  const [pantry, candidates] = await Promise.all([
+    getPantryContextForHousehold(householdId, now, catalog),
+    attachStructuredIngredients(dbRecipes.map(dbRecipeToSearchable)),
+  ]);
+  const foodPreferences = createFoodPreferenceContext(
+    {
+      favoriteFoods: members.flatMap((m) => m.likedFoods),
+      dislikedFoods: members.flatMap((m) => m.dislikedFoods),
+    },
+    catalog,
+  );
 
   const varietySince = new Date(today);
   varietySince.setDate(varietySince.getDate() - VARIETY_WINDOW_DAYS);
@@ -115,5 +127,5 @@ export async function buildPlanningContext(
     recentRecipeCounts.set(log.recipeId, (recentRecipeCounts.get(log.recipeId) ?? 0) + 1);
   }
 
-  return { householdId, members, excludedIngredients: [], pantry, budget, candidates, recentRecipeCounts };
+  return { householdId, members, excludedIngredients: [], pantry, budget, candidates, foodPreferences, recentRecipeCounts };
 }

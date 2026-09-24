@@ -1,7 +1,8 @@
 import type { PantryUnit } from "@prisma/client";
 import { aggregateIngredients, type MealForAggregation } from "../../mealPrep/aggregation";
-import { enrichAggregatedIngredients, type PantryItemForMatch } from "../../mealPrep/enrichment";
+import { enrichAggregatedIngredients, pantryItemMatchesIngredient, type PantryItemForMatch } from "../../mealPrep/enrichment";
 import { normalizeIngredientKey, parseIngredientLine } from "../../mealPrep/ingredientParser";
+import type { FoodCatalog } from "../../recipes/catalog";
 import { SLOT_LABELS, WEEKDAY_LABELS } from "../../labels";
 import type { Insight } from "../types";
 
@@ -18,6 +19,8 @@ export interface MealPlanInsightItem {
 export interface PantryInsightStock {
   id: string;
   name: string;
+  /** Verknüpftes zentrales Food/Ingredient; fehlt bei freien Items. */
+  ingredientId?: string | null;
   remainingQuantity: number;
   unit: PantryUnit;
   expirationDate: Date | null;
@@ -51,7 +54,13 @@ function weekdayLabel(date: Date): string {
 }
 
 function toMatchInput(pantryItems: PantryInsightStock[]): PantryItemForMatch[] {
-  return pantryItems.map((p) => ({ id: p.id, name: p.name, remainingQuantity: p.remainingQuantity, unit: p.unit }));
+  return pantryItems.map((p) => ({
+    id: p.id,
+    name: p.name,
+    ingredientId: p.ingredientId,
+    remainingQuantity: p.remainingQuantity,
+    unit: p.unit,
+  }));
 }
 
 /**
@@ -62,7 +71,7 @@ function toMatchInput(pantryItems: PantryInsightStock[]): PantryItemForMatch[] {
  * die ingredientParser.ts strukturiert erkennt, fließen ein; unstrukturierte
  * Zeilen (z.B. "Salz, Pfeffer") werden nie als "fehlend" behauptet.
  */
-function evaluateMealCoverage(meal: MealPlanInsightItem, pantryItems: PantryInsightStock[]) {
+function evaluateMealCoverage(meal: MealPlanInsightItem, pantryItems: PantryInsightStock[], catalog?: FoodCatalog) {
   const mealForAggregation: MealForAggregation = {
     id: meal.id,
     date: meal.date,
@@ -75,7 +84,7 @@ function evaluateMealCoverage(meal: MealPlanInsightItem, pantryItems: PantryInsi
   const { aggregated } = aggregateIngredients([mealForAggregation]);
   if (aggregated.length === 0) return null;
 
-  const enriched = enrichAggregatedIngredients(aggregated, toMatchInput(pantryItems), new Map(), new Map());
+  const enriched = enrichAggregatedIngredients(aggregated, toMatchInput(pantryItems), new Map(), new Map(), catalog);
   const missing = enriched.filter((i) => !i.pantry || i.pantry.availableQuantity < i.totalQuantity);
   return { enriched, missing };
 }
@@ -89,12 +98,13 @@ export function detectMealMissingIngredients(
   meals: MealPlanInsightItem[],
   pantryItems: PantryInsightStock[],
   now: Date = new Date(),
+  catalog?: FoodCatalog,
 ): Insight[] {
   const insights: Insight[] = [];
 
   for (const meal of meals) {
     if (daysBetween(now, meal.date) !== 0) continue;
-    const coverage = evaluateMealCoverage(meal, pantryItems);
+    const coverage = evaluateMealCoverage(meal, pantryItems, catalog);
     if (!coverage || coverage.missing.length === 0 || coverage.missing.length > MAX_MISSING_FOR_INSIGHT) continue;
 
     const slotLabel = SLOT_LABELS[meal.slot] ?? meal.slot;
@@ -127,12 +137,13 @@ export function detectMealFullyCovered(
   meals: MealPlanInsightItem[],
   pantryItems: PantryInsightStock[],
   now: Date = new Date(),
+  catalog?: FoodCatalog,
 ): Insight[] {
   const insights: Insight[] = [];
 
   for (const meal of meals) {
     if (daysBetween(now, meal.date) !== 0) continue;
-    const coverage = evaluateMealCoverage(meal, pantryItems);
+    const coverage = evaluateMealCoverage(meal, pantryItems, catalog);
     if (!coverage || coverage.missing.length > 0) continue;
 
     insights.push({
@@ -157,13 +168,15 @@ export function detectMealFullyCovered(
  * passender Pantry-Bestand VOR dem Mahlzeit-Datum abläuft - ein echter
  * Konflikt, den weder die reine Pantry-Ablaufwarnung (kennt den Plan nicht)
  * noch die Coverage-Prüfung oben (kennt nur Menge, kein Ablaufdatum pro
- * Zutat) allein erkennen. Derselbe Namensabgleich wie enrichment.ts
- * (normalizeIngredientKey), hier zusätzlich mit dem Ablaufdatum verglichen.
+ * Zutat) allein erkennen. Derselbe Abgleich wie enrichment.ts
+ * (pantryItemMatchesIngredient: Food-ID, sonst Namen), hier zusätzlich mit
+ * dem Ablaufdatum verglichen.
  */
 export function detectMealIngredientExpiresBeforeMeal(
   meals: MealPlanInsightItem[],
   pantryItems: PantryInsightStock[],
   now: Date = new Date(),
+  catalog?: FoodCatalog,
 ): Insight[] {
   const insights: Insight[] = [];
 
@@ -178,7 +191,7 @@ export function detectMealIngredientExpiresBeforeMeal(
 
       for (const item of pantryItems) {
         if (item.remainingQuantity <= 0 || !item.expirationDate) continue;
-        if (normalizeIngredientKey(item.name) !== normalizedName) continue;
+        if (!pantryItemMatchesIngredient(item, normalizedName, catalog)) continue;
         if (item.expirationDate >= meal.date) continue;
 
         const slotLabel = SLOT_LABELS[meal.slot] ?? meal.slot;
