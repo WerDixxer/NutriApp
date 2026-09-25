@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { getApiUserId } from "@/lib/session";
 import { logPayloadSchema } from "@/lib/validation/log";
 import { firstZodIssue } from "@/lib/validation/zodError";
+import { invalidJsonBodyResponse, readJsonBody } from "@/lib/validation/jsonBody";
 
 /** `?date=JJJJ-MM-TT` ist ein Kalendertag des Nutzers; ohne Angabe gilt heute. */
 export async function GET(request: Request) {
@@ -31,7 +32,9 @@ export async function POST(request: Request) {
   const userId = await getApiUserId();
   if (!userId) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
 
-  const parsed = logPayloadSchema.safeParse(await request.json());
+  const jsonBody = await readJsonBody(request);
+  if (!jsonBody.ok) return invalidJsonBodyResponse();
+  const parsed = logPayloadSchema.safeParse(jsonBody.value);
   if (!parsed.success) {
     return NextResponse.json({ error: firstZodIssue(parsed.error) }, { status: 400 });
   }

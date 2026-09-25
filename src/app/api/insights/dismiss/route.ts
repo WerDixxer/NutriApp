@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { getApiUserId } from "@/lib/session";
 import { dismissInsightSchema } from "@/lib/validation/insights";
 import { firstZodIssue } from "@/lib/validation/zodError";
+import { invalidJsonBodyResponse, readJsonBody } from "@/lib/validation/jsonBody";
 
 /**
  * Merkt sich, dass DIESES Profil dieses eine Insight (per stabiler id, siehe
@@ -16,7 +17,9 @@ export async function POST(request: Request) {
   const userId = await getApiUserId();
   if (!userId) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
 
-  const parsed = dismissInsightSchema.safeParse(await request.json());
+  const jsonBody = await readJsonBody(request);
+  if (!jsonBody.ok) return invalidJsonBodyResponse();
+  const parsed = dismissInsightSchema.safeParse(jsonBody.value);
   if (!parsed.success) {
     return NextResponse.json({ error: firstZodIssue(parsed.error) }, { status: 400 });
   }

@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db";
 import { isUniqueConstraintError } from "@/lib/prismaErrors";
 import { updateHouseholdSchema } from "@/lib/validation/household";
 import { firstZodIssue } from "@/lib/validation/zodError";
+import { invalidJsonBodyResponse, readJsonBody } from "@/lib/validation/jsonBody";
 
 const ALREADY_IN_HOUSEHOLD_MESSAGE = "Du gehörst bereits einem Haushalt an.";
 
@@ -33,7 +34,9 @@ export async function POST(request: Request) {
   const existing = await prisma.householdMember.findUnique({ where: { userId }, select: { id: true } });
   if (existing) return NextResponse.json({ error: ALREADY_IN_HOUSEHOLD_MESSAGE }, { status: 409 });
 
-  const parsed = updateHouseholdSchema.safeParse(await request.json());
+  const jsonBody = await readJsonBody(request);
+  if (!jsonBody.ok) return invalidJsonBodyResponse();
+  const parsed = updateHouseholdSchema.safeParse(jsonBody.value);
   if (!parsed.success) {
     return NextResponse.json({ error: firstZodIssue(parsed.error) }, { status: 400 });
   }
@@ -54,7 +57,9 @@ export async function PATCH(request: Request) {
   if (!ctx) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
   if (ctx.role !== "OWNER") return NextResponse.json({ error: "Nur der Owner kann den Haushalt bearbeiten." }, { status: 403 });
 
-  const parsed = updateHouseholdSchema.safeParse(await request.json());
+  const jsonBody = await readJsonBody(request);
+  if (!jsonBody.ok) return invalidJsonBodyResponse();
+  const parsed = updateHouseholdSchema.safeParse(jsonBody.value);
   if (!parsed.success) {
     return NextResponse.json({ error: firstZodIssue(parsed.error) }, { status: 400 });
   }

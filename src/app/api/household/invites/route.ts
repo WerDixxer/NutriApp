@@ -3,6 +3,7 @@ import { getCurrentHouseholdContext } from "@/lib/household/context";
 import { createInvite, listPendingInvites } from "@/lib/household/inviteService";
 import { createInviteSchema } from "@/lib/validation/household";
 import { firstZodIssue } from "@/lib/validation/zodError";
+import { invalidJsonBodyResponse, readJsonBody } from "@/lib/validation/jsonBody";
 
 export async function GET() {
   const ctx = await getCurrentHouseholdContext();
@@ -19,7 +20,9 @@ export async function POST(request: Request) {
   if (!ctx) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
   if (ctx.role !== "OWNER") return NextResponse.json({ error: "Nur der Owner kann einladen." }, { status: 403 });
 
-  const parsed = createInviteSchema.safeParse(await request.json());
+  const jsonBody = await readJsonBody(request);
+  if (!jsonBody.ok) return invalidJsonBodyResponse();
+  const parsed = createInviteSchema.safeParse(jsonBody.value);
   if (!parsed.success) {
     return NextResponse.json({ error: firstZodIssue(parsed.error) }, { status: 400 });
   }

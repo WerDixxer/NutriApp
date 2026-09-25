@@ -66,3 +66,23 @@ describe("POST /api/pantry", () => {
     expect(createPantryItem).toHaveBeenCalledWith("household-A", expect.objectContaining({ name: "Reis" }));
   });
 });
+
+describe("POST /api/pantry: Request-Body (F-19)", () => {
+  it.each([
+    ["kaputtem JSON", "{kaputt"],
+    ["leerem Body", ""],
+  ])("antwortet bei %s mit 400 statt 500 und legt nichts an", async (_label, body) => {
+    getApiHouseholdId.mockResolvedValueOnce("household-A");
+    const res = await POST(new Request("http://x/api/pantry", { method: "POST", body }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("kein gültiges JSON");
+    expect(createPantryItem).not.toHaveBeenCalled();
+  });
+
+  it("leitet ein leeres Objekt weiterhin an die Schema-Prüfung weiter (nicht als kaputtes JSON)", async () => {
+    getApiHouseholdId.mockResolvedValueOnce("household-A");
+    const res = await POST(new Request("http://x/api/pantry", { method: "POST", body: "{}" }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).not.toContain("kein gültiges JSON");
+  });
+});

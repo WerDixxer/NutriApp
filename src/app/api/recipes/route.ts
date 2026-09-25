@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { getApiUserId } from "@/lib/session";
 import { recipePayloadSchema } from "@/lib/validation/recipes";
 import { firstZodIssue } from "@/lib/validation/zodError";
+import { invalidJsonBodyResponse, readJsonBody } from "@/lib/validation/jsonBody";
 
 export async function GET() {
   const userId = await getApiUserId();
@@ -23,7 +24,9 @@ export async function POST(request: Request) {
   const userId = await getApiUserId();
   if (!userId) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
 
-  const parsed = recipePayloadSchema.safeParse(await request.json());
+  const jsonBody = await readJsonBody(request);
+  if (!jsonBody.ok) return invalidJsonBodyResponse();
+  const parsed = recipePayloadSchema.safeParse(jsonBody.value);
   if (!parsed.success) {
     return NextResponse.json({ error: firstZodIssue(parsed.error) }, { status: 400 });
   }

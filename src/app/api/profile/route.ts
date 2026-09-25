@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { getApiUserId } from "@/lib/session";
 import { profilePayloadSchema } from "@/lib/validation/profile";
 import { firstZodIssue } from "@/lib/validation/zodError";
+import { invalidJsonBodyResponse, readJsonBody } from "@/lib/validation/jsonBody";
 
 export type { ProfilePayload, TrainingSessionPayload } from "@/lib/validation/profile";
 
@@ -46,7 +47,9 @@ export async function POST(request: Request) {
   const userId = await getApiUserId();
   if (!userId) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
 
-  const parsed = profilePayloadSchema.safeParse(await request.json());
+  const jsonBody = await readJsonBody(request);
+  if (!jsonBody.ok) return invalidJsonBodyResponse();
+  const parsed = profilePayloadSchema.safeParse(jsonBody.value);
   if (!parsed.success) {
     return NextResponse.json({ error: firstZodIssue(parsed.error) }, { status: 400 });
   }

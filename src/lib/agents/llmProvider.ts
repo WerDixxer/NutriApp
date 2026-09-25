@@ -70,6 +70,9 @@ export interface LLMProvider {
 
 export class LLMConfigError extends Error {}
 
+/** Ein LLM-Aufruf hat auch nach dem erlaubten Wiederholungsversuch nicht rechtzeitig geantwortet. */
+export class LLMTimeoutError extends Error {}
+
 let cached: LLMProvider | null = null;
 
 export function getLLMProvider(): LLMProvider {

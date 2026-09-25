@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { generateAndSaveMealPlan } from "@/lib/mealPlanner/generate";
 import { generateMealPlanSchema } from "@/lib/validation/mealPlan";
 import { firstZodIssue } from "@/lib/validation/zodError";
+import { invalidJsonBodyResponse, readJsonBody } from "@/lib/validation/jsonBody";
 
 /**
  * Erzeugt und speichert einen Meal Plan (Abschnitt 17/22): Session prüfen,
@@ -16,7 +17,9 @@ export async function POST(request: Request) {
   const householdId = await getApiHouseholdId();
   if (!householdId) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
 
-  const parsed = generateMealPlanSchema.safeParse(await request.json());
+  const jsonBody = await readJsonBody(request);
+  if (!jsonBody.ok) return invalidJsonBodyResponse();
+  const parsed = generateMealPlanSchema.safeParse(jsonBody.value);
   if (!parsed.success) {
     return NextResponse.json({ error: firstZodIssue(parsed.error) }, { status: 400 });
   }

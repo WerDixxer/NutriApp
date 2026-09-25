@@ -3,12 +3,15 @@ import { prisma } from "@/lib/db";
 import { getApiUserId } from "@/lib/session";
 import { trendTagsPayloadSchema } from "@/lib/validation/profile";
 import { firstZodIssue } from "@/lib/validation/zodError";
+import { invalidJsonBodyResponse, readJsonBody } from "@/lib/validation/jsonBody";
 
 export async function POST(request: Request) {
   const userId = await getApiUserId();
   if (!userId) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
 
-  const parsed = trendTagsPayloadSchema.safeParse(await request.json());
+  const jsonBody = await readJsonBody(request);
+  if (!jsonBody.ok) return invalidJsonBodyResponse();
+  const parsed = trendTagsPayloadSchema.safeParse(jsonBody.value);
   if (!parsed.success) {
     return NextResponse.json({ error: firstZodIssue(parsed.error) }, { status: 400 });
   }

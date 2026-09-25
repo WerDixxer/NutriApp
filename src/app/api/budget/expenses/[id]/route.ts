@@ -3,6 +3,7 @@ import { getApiHouseholdId } from "@/lib/session";
 import { deleteExpense, updateExpense } from "@/lib/budget/budgetService";
 import { updateExpenseSchema } from "@/lib/validation/budget";
 import { firstZodIssue } from "@/lib/validation/zodError";
+import { invalidJsonBodyResponse, readJsonBody } from "@/lib/validation/jsonBody";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -11,7 +12,9 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   if (!householdId) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
 
   const { id } = await params;
-  const parsed = updateExpenseSchema.safeParse(await request.json());
+  const jsonBody = await readJsonBody(request);
+  if (!jsonBody.ok) return invalidJsonBodyResponse();
+  const parsed = updateExpenseSchema.safeParse(jsonBody.value);
   if (!parsed.success) {
     return NextResponse.json({ error: firstZodIssue(parsed.error) }, { status: 400 });
   }

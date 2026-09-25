@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import {
   LLMConfigError,
+  LLMTimeoutError,
   type ContentBlock,
   type LLMChatParams,
   type LLMMessage,
@@ -10,6 +11,15 @@ import {
 } from "./llmProvider";
 
 const DEFAULT_MODEL = "claude-sonnet-5";
+
+/**
+ * Explizit statt der SDK-Standardwerte (10 Minuten Timeout, 2 Wiederholungen): 30 s pro Versuch
+ * reichen für die längste Antwort (Rezept-Anpassung, max. 1500 Tokens), halten den Chat aber
+ * interaktiv. Höchstens 1 Wiederholung je LLM-Aufruf; eine Nutzeranfrage macht höchstens 2 Aufrufe
+ * und dauert damit höchstens rund 2 Minuten (siehe STALE_ACTIVE_REQUEST_MS in assistantUsage.ts).
+ */
+export const LLM_REQUEST_TIMEOUT_MS = 30_000;
+export const LLM_MAX_RETRIES = 1;
 
 function toAnthropicContent(content: string | ContentBlock[]): Anthropic.MessageParam["content"] {
   if (typeof content === "string") return content;
@@ -65,7 +75,7 @@ export class AnthropicProvider implements LLMProvider {
         "ANTHROPIC_API_KEY fehlt. Trag deinen Anthropic API Key in die lokale .env-Datei ein (siehe .env.example).",
       );
     }
-    this.client = new Anthropic({ apiKey });
+    this.client = new Anthropic({ apiKey, timeout: LLM_REQUEST_TIMEOUT_MS, maxRetries: LLM_MAX_RETRIES });
     return this.client;
   }
 
@@ -73,18 +83,24 @@ export class AnthropicProvider implements LLMProvider {
     const client = this.getClient();
     const model = process.env.LLM_MODEL || DEFAULT_MODEL;
 
-    const response = await client.messages.create({
-      model,
-      max_tokens: params.maxTokens ?? 1024,
-      system: params.system,
-      messages: params.messages.map(toLLMMessage),
-      tools: params.tools?.map((t) => ({
-        name: t.name,
-        description: t.description,
-        input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
-      })),
-      tool_choice: toAnthropicToolChoice(params.toolChoice),
-    });
+    let response: Anthropic.Message;
+    try {
+      response = await client.messages.create({
+        model,
+        max_tokens: params.maxTokens ?? 1024,
+        system: params.system,
+        messages: params.messages.map(toLLMMessage),
+        tools: params.tools?.map((t) => ({
+          name: t.name,
+          description: t.description,
+          input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
+        })),
+        tool_choice: toAnthropicToolChoice(params.toolChoice),
+      });
+    } catch (error) {
+      if (error instanceof Anthropic.APIConnectionTimeoutError) throw new LLMTimeoutError("LLM-Anfrage hat das Timeout überschritten.");
+      throw error;
+    }
 
     return {
       content: fromAnthropicContent(response.content),

@@ -3,13 +3,16 @@ import { getCurrentHouseholdContext } from "@/lib/household/context";
 import { transferOwnership } from "@/lib/household/householdService";
 import { transferOwnershipSchema } from "@/lib/validation/household";
 import { firstZodIssue } from "@/lib/validation/zodError";
+import { invalidJsonBodyResponse, readJsonBody } from "@/lib/validation/jsonBody";
 
 export async function POST(request: Request) {
   const ctx = await getCurrentHouseholdContext();
   if (!ctx) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
   if (ctx.role !== "OWNER") return NextResponse.json({ error: "Nur der Owner kann die Eigentümerschaft übertragen." }, { status: 403 });
 
-  const parsed = transferOwnershipSchema.safeParse(await request.json());
+  const jsonBody = await readJsonBody(request);
+  if (!jsonBody.ok) return invalidJsonBodyResponse();
+  const parsed = transferOwnershipSchema.safeParse(jsonBody.value);
   if (!parsed.success) {
     return NextResponse.json({ error: firstZodIssue(parsed.error) }, { status: 400 });
   }

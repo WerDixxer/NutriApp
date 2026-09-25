@@ -235,8 +235,12 @@ Es gibt derzeit **keinen dokumentierten und geprüften Produktionsbetrieb**. Bek
   `AUTH_URL` (siehe Tabelle). Die Registrierung ist offen.
 - **Keine Prüfung der Umgebungsvariablen beim Start:** fehlende oder falsche Werte fallen erst zur
   Laufzeit auf.
-- **Kein Rate Limit für den Food Assistant:** jeder angemeldete Nutzer kann LLM-Anfragen auslösen
-  (Kosten).
+- **Food Assistant begrenzt (F-20):** pro Nutzer höchstens 20 Anfragen je Stunde und 100 je
+  24 Stunden sowie eine gleichzeitig (sonst 429, beim Limit mit `Retry-After`). Jeder LLM-Aufruf
+  hat 30 s Timeout und höchstens 1 Wiederholung. Gespeichert in der Tabelle `AssistantRequest`
+  (`src/lib/agents/assistantUsage.ts`); eine bestehende lokale Datenbank braucht dafür einmal
+  `npx prisma db push` (fügt nur die Tabelle hinzu). Ein globales Kostenlimit gibt es nicht – das
+  bleibt Aufgabe des Monitorings beim API-Anbieter.
 - **F-07 – offener Dev-Zugang zu internen Tools:** ohne `INTERNAL_REVIEW_EMAILS` hat im
   Entwicklungsmodus jeder eingeloggte Nutzer Zugriff. `next.config.ts` erlaubt Entwicklungszugriffe
   über `*.trycloudflare.com`-Tunnel; wer den Dev-Server so teilt, sollte die Allowlist setzen.

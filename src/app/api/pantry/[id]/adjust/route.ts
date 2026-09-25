@@ -3,6 +3,7 @@ import { getApiHouseholdId } from "@/lib/session";
 import { adjustPantryItemQuantity } from "@/lib/pantry/pantryService";
 import { adjustPantryQuantitySchema } from "@/lib/validation/pantry";
 import { firstZodIssue } from "@/lib/validation/zodError";
+import { invalidJsonBodyResponse, readJsonBody } from "@/lib/validation/jsonBody";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -16,7 +17,9 @@ export async function POST(request: Request, { params }: RouteContext) {
   if (!householdId) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
 
   const { id } = await params;
-  const parsed = adjustPantryQuantitySchema.safeParse(await request.json());
+  const jsonBody = await readJsonBody(request);
+  if (!jsonBody.ok) return invalidJsonBodyResponse();
+  const parsed = adjustPantryQuantitySchema.safeParse(jsonBody.value);
   if (!parsed.success) {
     return NextResponse.json({ error: firstZodIssue(parsed.error) }, { status: 400 });
   }

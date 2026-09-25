@@ -263,3 +263,27 @@ describe("POST /api/profile (F-05)", () => {
     expect((await profileState(profileId)).allergies).toEqual(["Nüsse", "Sesam"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// F-19: kaputter Request-Body
+// ---------------------------------------------------------------------------
+
+describe("POST /api/profile: Request-Body (F-19)", () => {
+  it("kaputtes JSON ergibt 400 statt 500; Profil, Allergien und Pläne bleiben unverändert", async () => {
+    const { profile } = await createUserWithProfile();
+    const before = await profileState(profile.id);
+
+    const res = await POST(new Request("http://localhost/api/profile", { method: "POST", headers: { "content-type": "application/json" }, body: '{"age": 35,' }));
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Ungültige Anfrage: Der Inhalt ist kein gültiges JSON." });
+    expect(await profileState(profile.id)).toEqual(before);
+  });
+
+  it("gültiges JSON mit falscher Struktur bekommt weiterhin die Meldung des Schemas", async () => {
+    await createUserWithProfile();
+    const res = await POST(postRequest({ foo: "bar" }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).not.toContain("kein gültiges JSON");
+  });
+});

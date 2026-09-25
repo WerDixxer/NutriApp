@@ -115,3 +115,34 @@ describe("POST /api/household: neuen Haushalt für haushaltslosen Nutzer anlegen
     expect(createSoloHousehold).toHaveBeenCalledWith("user-A", "Meine WG");
   });
 });
+
+describe("POST/PATCH /api/household: Request-Body (F-19)", () => {
+  it("PATCH: kaputtes JSON vom OWNER ergibt 400 statt 500, nichts wird geändert", async () => {
+    getCurrentHouseholdContext.mockResolvedValueOnce({ userId: "u1", householdId: "household-A", role: "OWNER", memberId: "m1" });
+    const res = await PATCH(new Request("http://x/api/household", { method: "PATCH", body: "{kaputt" }));
+    expect(res.status).toBe(400);
+    expect(updateHousehold).not.toHaveBeenCalled();
+  });
+
+  it("PATCH: die Rollenprüfung (403) kommt weiterhin vor dem Lesen des Bodys", async () => {
+    getCurrentHouseholdContext.mockResolvedValueOnce({ userId: "u1", householdId: "household-A", role: "MEMBER", memberId: "m1" });
+    const res = await PATCH(new Request("http://x/api/household", { method: "PATCH", body: "{kaputt" }));
+    expect(res.status).toBe(403);
+  });
+
+  it("POST: wer schon einem Haushalt angehört, bekommt weiterhin 409, auch bei kaputtem Body", async () => {
+    getApiUserId.mockResolvedValueOnce("u1");
+    householdMemberFindUnique.mockResolvedValueOnce({ id: "m1" });
+    const res = await POST(new Request("http://x/api/household", { method: "POST", body: "" }));
+    expect(res.status).toBe(409);
+    expect(createSoloHousehold).not.toHaveBeenCalled();
+  });
+
+  it("POST: ohne Haushalt ergibt ein leerer Body 400 statt 500, es entsteht kein Haushalt", async () => {
+    getApiUserId.mockResolvedValueOnce("u1");
+    householdMemberFindUnique.mockResolvedValueOnce(null);
+    const res = await POST(new Request("http://x/api/household", { method: "POST", body: "" }));
+    expect(res.status).toBe(400);
+    expect(createSoloHousehold).not.toHaveBeenCalled();
+  });
+});

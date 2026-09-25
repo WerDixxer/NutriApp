@@ -3,6 +3,7 @@ import { getApiHouseholdId } from "@/lib/session";
 import { listBudgets, setBudget } from "@/lib/budget/budgetService";
 import { setBudgetSchema } from "@/lib/validation/budget";
 import { firstZodIssue } from "@/lib/validation/zodError";
+import { invalidJsonBodyResponse, readJsonBody } from "@/lib/validation/jsonBody";
 
 export async function GET() {
   const householdId = await getApiHouseholdId();
@@ -17,7 +18,9 @@ export async function POST(request: Request) {
   const householdId = await getApiHouseholdId();
   if (!householdId) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
 
-  const parsed = setBudgetSchema.safeParse(await request.json());
+  const jsonBody = await readJsonBody(request);
+  if (!jsonBody.ok) return invalidJsonBodyResponse();
+  const parsed = setBudgetSchema.safeParse(jsonBody.value);
   if (!parsed.success) {
     return NextResponse.json({ error: firstZodIssue(parsed.error) }, { status: 400 });
   }
