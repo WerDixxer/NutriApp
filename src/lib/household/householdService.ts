@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../db";
 import type { UpdateHouseholdInput } from "../validation/household";
 import type { HouseholdMemberView } from "./context";
@@ -20,14 +21,15 @@ export function getHousehold(householdId: string) {
  * OWNER. Von registerAction() (neue Registrierung) UND von der
  * /api/household-POST-Route (bestehender, aktuell haushaltsloser User, z.B.
  * nach dem Verlassen seines vorherigen Haushalts, siehe leaveHousehold())
- * genutzt, damit diese Logik nur einmal existiert. Wirft NICHT, wenn der User
- * schon ein Haushaltsmitglied ist - das prüft der Aufrufer (unique-Constraint
- * auf HouseholdMember.userId würde sonst ohnehin einen DB-Fehler werfen).
+ * genutzt, damit diese Logik nur einmal existiert. Ob der User schon ein
+ * Haushaltsmitglied ist, prüft der Aufrufer; ist er es doch (z.B. durch einen
+ * parallelen Request), wirft der Unique-Index auf HouseholdMember.userId P2002.
+ * Haushalt und Mitgliedschaft entstehen in EINEM Schreibvorgang, es bleibt also
+ * nie ein Haushalt ohne Mitglied zurück. `db`: für Aufrufer, die das in ihre
+ * eigene Transaktion einbetten (registerAction()).
  */
-export async function createSoloHousehold(userId: string, name: string) {
-  const household = await prisma.household.create({ data: { name } });
-  await prisma.householdMember.create({ data: { householdId: household.id, userId, role: "OWNER" } });
-  return household;
+export function createSoloHousehold(userId: string, name: string, db: Prisma.TransactionClient = prisma) {
+  return db.household.create({ data: { name, members: { create: { userId, role: "OWNER" } } } });
 }
 
 export function updateHousehold(householdId: string, input: UpdateHouseholdInput) {

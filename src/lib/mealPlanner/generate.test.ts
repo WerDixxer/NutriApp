@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { CalendarDate } from "../calendarDate";
 
 const buildPlanningContext = vi.fn();
 const generateMealPlan = vi.fn();
@@ -13,10 +14,11 @@ vi.mock("./mealPlanService", () => ({ createMealPlan: (...args: unknown[]) => cr
 const { generateAndSaveMealPlan } = await import("./generate");
 
 const now = new Date("2026-09-17T12:00:00");
+const TODAY: CalendarDate = "2026-09-17";
 const baseRequest: Parameters<typeof generateAndSaveMealPlan>[0] = {
   householdId: "household-A",
   householdMemberIds: null,
-  startDate: now,
+  startDate: TODAY,
   days: 7,
   slots: ["BREAKFAST", "LUNCH", "DINNER"],
 };
@@ -75,7 +77,7 @@ describe("generateAndSaveMealPlan: erfolgreicher Pfad", () => {
 
   it("speichert PARTIAL-Pläne als DRAFT, nicht als ACTIVE", async () => {
     buildPlanningContext.mockResolvedValueOnce(ctxWithMembers());
-    generateMealPlan.mockReturnValueOnce({ status: "PARTIAL", meals: [], unmetSlots: [{ date: now, slot: "DINNER", reason: "x" }] });
+    generateMealPlan.mockReturnValueOnce({ status: "PARTIAL", meals: [], unmetSlots: [{ date: TODAY, slot: "DINNER", reason: "x" }] });
     validateGeneratedPlan.mockReturnValueOnce([]);
     createMealPlan.mockResolvedValueOnce({ id: "plan-1" });
     const result = await generateAndSaveMealPlan(baseRequest, now);

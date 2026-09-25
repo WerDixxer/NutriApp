@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { formatCalendarDate, fromDbDate } from "@/lib/calendarDate";
 import { SLOT_LABELS } from "@/lib/labels";
 import { Button } from "@/components/ui/Button";
 import { Pill } from "@/components/ui/Pill";
@@ -58,8 +59,9 @@ interface MealPrepView {
   summary: string[];
 }
 
+/** Mahlzeit-Daten sind Kalendertage (in der API als UTC-Mitternacht), nie in Browserzeit umrechnen. */
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" });
+  return formatCalendarDate(fromDbDate(new Date(iso)), { weekday: "short", day: "2-digit", month: "2-digit" });
 }
 
 function formatQuantity(n: number): string {

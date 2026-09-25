@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { addDays, fromDbDate, type CalendarDate } from "./calendarDate";
 
 // Kleine In-Memory-Nachbildung der vier verwendeten Prisma-Aufrufe, damit die
 // echte Generierungslogik (Reihenfolge, Wochenverwendung, Speicherung) läuft.
@@ -34,7 +35,8 @@ interface FakeRecipe {
 }
 
 let store: StoredDay[] = [];
-let createdDates: number[] = [];
+/** Kalendertage der neu gespeicherten Tagespläne, in Speicherreihenfolge. */
+let createdDays: CalendarDate[] = [];
 let recipes: FakeRecipe[] = [];
 let profile: Record<string, unknown> = {};
 let idCounter = 0;
@@ -61,7 +63,7 @@ vi.mock("./db", () => ({
       findMany: async ({ where }: { where: { profileId: string; date: { gte: Date; lte: Date } } }) =>
         store.filter((d) => d.profileId === where.profileId && d.date >= where.date.gte && d.date <= where.date.lte),
       create: async ({ data }: { data: { profileId: string; date: Date; items: { create: Omit<StoredItem, "id" | "recipe">[] } } }) => {
-        createdDates.push(data.date.getTime());
+        createdDays.push(fromDbDate(data.date));
         const day: StoredDay = {
           id: `day-${++idCounter}`,
           profileId: data.profileId,
@@ -82,7 +84,7 @@ vi.mock("./db", () => ({
 const { getOrGenerateDayPlan, getOrGenerateWeekPlan } = await import("./generateMealPlan");
 
 const PROFILE_ID = "profile-1";
-const MONDAY = new Date(2026, 8, 14);
+const MONDAY: CalendarDate = "2026-09-14";
 
 function fakeRecipe(id: string, slot: string, overrides: Partial<FakeRecipe> = {}): FakeRecipe {
   // Makro-Zusammensetzung nahe an den Slot-Zielen (Protein ~25 %, Carbs ~45 %, Fett ~30 % der Kalorien).
@@ -135,7 +137,7 @@ function slotRecipeIds(plans: Awaited<ReturnType<typeof getOrGenerateWeekPlan>>,
 
 beforeEach(() => {
   store = [];
-  createdDates = [];
+  createdDays = [];
   idCounter = 0;
   foods = [];
   alternatives = [];
@@ -163,13 +165,12 @@ describe("getOrGenerateWeekPlan: Variety innerhalb der Woche", () => {
   it("erzeugt fehlende Tage nacheinander, in Datumsreihenfolge", async () => {
     await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
 
-    const expected = Array.from({ length: 7 }, (_, i) => new Date(2026, 8, 14 + i).getTime());
-    expect(createdDates).toEqual(expected);
+    expect(createdDays).toEqual(["2026-09-14", "2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18", "2026-09-19", "2026-09-20"]);
   });
 
   it("Gegenprobe: unabhängig erzeugte Tage (jeder mit leerer Verwendung) wiederholen dieselben Rezepte", async () => {
     const plans = [];
-    for (let i = 0; i < 7; i++) plans.push(await getOrGenerateDayPlan(PROFILE_ID, new Date(2026, 8, 14 + i), new Map()));
+    for (let i = 0; i < 7; i++) plans.push(await getOrGenerateDayPlan(PROFILE_ID, addDays(MONDAY, i), new Map()));
 
     expect(new Set(slotRecipeIds(plans, "BREAKFAST")).size).toBe(1);
     expect(new Set(slotRecipeIds(plans, "LUNCH")).size).toBe(1);
@@ -299,7 +300,7 @@ describe("Wochenverwendung gehört zu genau einem Generierungslauf", () => {
   it("wirkt nicht auf den nächsten Lauf: eine neue Woche beginnt wieder beim ersten Rezept", async () => {
     const first = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
     store = [];
-    createdDates = [];
+    createdDays = [];
     const second = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
 
     expect(slotRecipeIds(second, "BREAKFAST")).toEqual(slotRecipeIds(first, "BREAKFAST"));
@@ -308,7 +309,7 @@ describe("Wochenverwendung gehört zu genau einem Generierungslauf", () => {
 
   it("ist zwischen Wochen unabhängig: die Folgewoche beginnt nicht bei den Rezepten der Vorwoche", async () => {
     await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
-    const nextWeek = await getOrGenerateWeekPlan(PROFILE_ID, new Date(2026, 8, 21));
+    const nextWeek = await getOrGenerateWeekPlan(PROFILE_ID, "2026-09-21");
 
     expect(slotRecipeIds(nextWeek, "BREAKFAST")[0]).toBe("b1");
   });
@@ -324,18 +325,18 @@ describe("Wochenverwendung gehört zu genau einem Generierungslauf", () => {
 
 describe("bereits gespeicherte Tage", () => {
   it("bleiben unverändert und werden nicht neu erzeugt", async () => {
-    const stored = await getOrGenerateDayPlan(PROFILE_ID, new Date(2026, 8, 18), new Map());
-    createdDates = [];
+    const stored = await getOrGenerateDayPlan(PROFILE_ID, "2026-09-18", new Map());
+    createdDays = [];
 
     const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
 
     expect(plans[4]).toBe(stored);
-    expect(createdDates).toHaveLength(6);
-    expect(createdDates).not.toContain(new Date(2026, 8, 18).getTime());
+    expect(createdDays).toHaveLength(6);
+    expect(createdDays).not.toContain("2026-09-18");
   });
 
   it("zählen für die Variety, auch wenn sie später in der Woche liegen als ein neu erzeugter Tag", async () => {
-    await getOrGenerateDayPlan(PROFILE_ID, new Date(2026, 8, 18), new Map()); // Freitag: b1, l1, d1
+    await getOrGenerateDayPlan(PROFILE_ID, "2026-09-18", new Map()); // Freitag: b1, l1, d1
     const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
 
     expect(slotRecipeIds(plans, "BREAKFAST")[0]).toBe("b2"); // Montag meidet das bereits am Freitag gewählte b1
@@ -343,8 +344,8 @@ describe("bereits gespeicherte Tage", () => {
   });
 
   it("fließen auch in einen einzeln erzeugten Tag ein (Dashboard-Weg ohne Wochenaufruf)", async () => {
-    const tuesday = await getOrGenerateDayPlan(PROFILE_ID, new Date(2026, 8, 15), new Map());
-    const wednesday = await getOrGenerateDayPlan(PROFILE_ID, new Date(2026, 8, 16));
+    const tuesday = await getOrGenerateDayPlan(PROFILE_ID, "2026-09-15", new Map());
+    const wednesday = await getOrGenerateDayPlan(PROFILE_ID, "2026-09-16");
 
     const tuesdayBreakfast = tuesday.items.find((i) => i.slot === "BREAKFAST")!.recipeId;
     const wednesdayBreakfast = wednesday.items.find((i) => i.slot === "BREAKFAST")!.recipeId;
@@ -352,7 +353,7 @@ describe("bereits gespeicherte Tage", () => {
   });
 
   it("zählen nicht aus einer anderen Woche", async () => {
-    await getOrGenerateDayPlan(PROFILE_ID, new Date(2026, 8, 13), new Map()); // Sonntag der Vorwoche
+    await getOrGenerateDayPlan(PROFILE_ID, "2026-09-13", new Map()); // Sonntag der Vorwoche
     const monday = await getOrGenerateDayPlan(PROFILE_ID, MONDAY);
 
     expect(monday.items.find((i) => i.slot === "BREAKFAST")!.recipeId).toBe("b1");

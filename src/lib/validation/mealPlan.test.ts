@@ -29,9 +29,15 @@ describe("generateMealPlanSchema", () => {
     expect(result.success).toBe(true);
   });
 
-  it("koerziert startDate zu einem Date-Objekt", () => {
+  it("liest startDate als Kalendertag, nicht als Zeitpunkt (F-10)", () => {
     const result = generateMealPlanSchema.parse({ startDate: "2026-09-21", days: 1, mealTypes: ["LUNCH"] });
-    expect(result.startDate).toBeInstanceOf(Date);
+    expect(result.startDate).toBe("2026-09-21");
+  });
+
+  it("lehnt Zeitpunkte und nicht existierende Tage als startDate ab", () => {
+    for (const startDate of ["2026-09-21T08:00:00Z", "2026-02-30", "21.09.2026"]) {
+      expect(generateMealPlanSchema.safeParse({ startDate, days: 1, mealTypes: ["LUNCH"] }).success).toBe(false);
+    }
   });
 });
 

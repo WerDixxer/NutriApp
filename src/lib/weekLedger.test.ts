@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { todayForUser, type CalendarDate } from "./calendarDate";
 import {
   assignInsightsToDays,
   buildWeekLedger,
   collectPlanRecipes,
-  dayKey,
   formatPortionLabel,
   formatWeekRange,
   shortRecipeName,
@@ -12,8 +12,8 @@ import {
   type PlanRecipe,
 } from "./weekLedger";
 
-const MONDAY = new Date(2026, 8, 14); // Montag, 14. September 2026
-const FRIDAY = new Date(2026, 8, 18);
+const MONDAY: CalendarDate = "2026-09-14"; // Montag
+const FRIDAY: CalendarDate = "2026-09-18";
 
 let counter = 0;
 function item(slot: string, time: string, name: string, kcal: number, portionMultiplier = 1): LedgerPlanItem {
@@ -53,13 +53,13 @@ describe("buildWeekLedger: Woche und Kopfzeile", () => {
   });
 
   it("formatiert Wochen über Monats- und Jahresgrenzen", () => {
-    expect(formatWeekRange(new Date(2026, 8, 28), new Date(2026, 9, 4))).toBe("28. September–4. Oktober");
-    expect(formatWeekRange(new Date(2026, 11, 28), new Date(2027, 0, 3))).toBe("28. Dezember 2026–3. Januar 2027");
-    expect(formatWeekRange(new Date(2026, 1, 23), new Date(2026, 2, 1))).toBe("23. Februar–1. März");
+    expect(formatWeekRange("2026-09-28", "2026-10-04")).toBe("28. September–4. Oktober");
+    expect(formatWeekRange("2026-12-28", "2027-01-03")).toBe("28. Dezember 2026–3. Januar 2027");
+    expect(formatWeekRange("2026-02-23", "2026-03-01")).toBe("23. Februar–1. März");
   });
 
   it("nimmt Monatsgrenzen mitten in der Woche korrekt mit", () => {
-    const ledger = buildWeekLedger({ weekStart: new Date(2026, 8, 28), plans: week(), today: FRIDAY });
+    const ledger = buildWeekLedger({ weekStart: "2026-09-28", plans: week(), today: FRIDAY });
     expect(ledger.days.map((d) => d.dayOfMonth)).toEqual([28, 29, 30, 1, 2, 3, 4]);
     expect(ledger.days[3].dateLabel).toBe("1. Oktober");
     expect(ledger.rangeLabel).toBe("28. September–4. Oktober");
@@ -67,8 +67,9 @@ describe("buildWeekLedger: Woche und Kopfzeile", () => {
 });
 
 describe("buildWeekLedger: heute", () => {
-  it("erkennt genau den heutigen Tag, unabhängig von der Uhrzeit", () => {
-    const { days } = buildWeekLedger({ weekStart: MONDAY, plans: week(), today: new Date(2026, 8, 18, 22, 45) });
+  it("erkennt genau den heutigen Tag, auch spätabends (Nutzerzeit)", () => {
+    const lateFridayEvening = new Date("2026-09-18T22:45:00+02:00");
+    const { days } = buildWeekLedger({ weekStart: MONDAY, plans: week(), today: todayForUser(lateFridayEvening) });
     expect(days.filter((d) => d.isToday).map((d) => d.key)).toEqual(["2026-09-18"]);
   });
 
@@ -77,7 +78,7 @@ describe("buildWeekLedger: heute", () => {
   });
 
   it("öffnet keinen Tag, wenn heute nicht in der Woche liegt", () => {
-    const ledger = buildWeekLedger({ weekStart: MONDAY, plans: week(), today: new Date(2026, 8, 25) });
+    const ledger = buildWeekLedger({ weekStart: MONDAY, plans: week(), today: "2026-09-25" });
     expect(ledger.days.some((d) => d.isToday)).toBe(false);
     expect(ledger.initialOpenKey).toBeNull();
   });
@@ -192,11 +193,6 @@ describe("buildWeekLedger: Tageszusammenfassung", () => {
 });
 
 describe("Hilfsfunktionen", () => {
-  it("dayKey verwendet das lokale Datum, nicht UTC", () => {
-    expect(dayKey(new Date(2026, 8, 14, 0, 30))).toBe("2026-09-14");
-    expect(dayKey(new Date(2026, 8, 14, 23, 59))).toBe("2026-09-14");
-  });
-
   it("shortRecipeName entfernt nur einen abschließenden Klammerzusatz", () => {
     expect(shortRecipeName("Rice Paper Dumplings (Knusprige Reispapier-Taschen)")).toBe("Rice Paper Dumplings");
     expect(shortRecipeName("Salat (Beilage) mit Dressing")).toBe("Salat (Beilage) mit Dressing");

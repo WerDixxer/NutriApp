@@ -43,10 +43,10 @@ describe("createMealPlan: verschachtelte, atomare Persistierung", () => {
   it("erstellt Plan, Mitglieder und Mahlzeiten in einem einzigen verschachtelten create()", async () => {
     mealPlanCreate.mockResolvedValueOnce({ id: "plan-1" });
     await createMealPlan("household-A", {
-      startDate: new Date("2026-09-21"),
-      endDate: new Date("2026-09-27"),
+      startDate: "2026-09-21",
+      endDate: "2026-09-27",
       householdMemberIds: ["member-1", "member-2"],
-      meals: [{ date: new Date("2026-09-21"), slot: "LUNCH", recipeId: "recipe-1", recipeName: "X", portionMultiplier: 1.2, reasons: ["Test-Grund"] }],
+      meals: [{ date: "2026-09-21", slot: "LUNCH", recipeId: "recipe-1", recipeName: "X", portionMultiplier: 1.2, reasons: ["Test-Grund"] }],
       status: "ACTIVE",
     });
     expect(mealPlanCreate).toHaveBeenCalledTimes(1);
@@ -55,6 +55,10 @@ describe("createMealPlan: verschachtelte, atomare Persistierung", () => {
     expect(createCall.data.members.create).toEqual([{ householdMemberId: "member-1" }, { householdMemberId: "member-2" }]);
     expect(createCall.data.meals.create[0].reasons).toBe(JSON.stringify(["Test-Grund"]));
     expect(createCall.data.meals.create[0].portionMultiplier).toBe(1.2);
+    // Kalendertage werden als UTC-Mitternacht gespeichert, das Planende ist der letzte Tag selbst (F-10).
+    expect(createCall.data.startDate).toEqual(new Date("2026-09-21T00:00:00.000Z"));
+    expect(createCall.data.endDate).toEqual(new Date("2026-09-27T00:00:00.000Z"));
+    expect(createCall.data.meals.create[0].date).toEqual(new Date("2026-09-21T00:00:00.000Z"));
   });
 });
 

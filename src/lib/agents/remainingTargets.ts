@@ -1,11 +1,6 @@
+import { todayForUser, toDbDate } from "../calendarDate";
 import { prisma } from "../db";
 import { calcFullTargets, type MacroTarget } from "../nutrition";
-
-function startOfDay(date: Date): Date {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
 
 /**
  * Tagesziel minus bereits geloggte Mahlzeiten. Gemeinsam genutzt von
@@ -26,7 +21,7 @@ export async function getRemainingDailyTargets(profileId: string, now: Date = ne
     sportType: profile.sportType,
   });
 
-  const entries = await prisma.logEntry.findMany({ where: { profileId, date: startOfDay(now) } });
+  const entries = await prisma.logEntry.findMany({ where: { profileId, date: toDbDate(todayForUser(now)) } });
   const consumed = entries.reduce(
     (acc, e) => ({
       kcal: acc.kcal + e.kcal,

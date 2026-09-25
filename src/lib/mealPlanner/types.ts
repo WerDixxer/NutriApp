@@ -1,4 +1,5 @@
 import type { DietType } from "@prisma/client";
+import type { CalendarDate } from "../calendarDate";
 import type { MacroTarget } from "../nutrition";
 import type { SearchableRecipe } from "../agents/recipeSearch";
 import type { HouseholdPantryContext } from "../rotation/rotationService";
@@ -42,7 +43,8 @@ export interface SlotTarget extends MacroTarget {
 }
 
 export interface GeneratedMeal {
-  date: Date;
+  /** Kalendertag der Mahlzeit (siehe src/lib/calendarDate.ts); wird erst beim Speichern zum DB-Wert. */
+  date: CalendarDate;
   slot: PlannableMealSlot;
   recipeId: string;
   recipeName: string;
@@ -51,7 +53,7 @@ export interface GeneratedMeal {
   reasons: string[];
 }
 
-export type UnmetSlot = { date: Date; slot: PlannableMealSlot; reason: string };
+export type UnmetSlot = { date: CalendarDate; slot: PlannableMealSlot; reason: string };
 
 export type MealPlanGenerationStatus = "SUCCESS" | "PARTIAL" | "NO_VALID_PLAN";
 

@@ -7,25 +7,14 @@ import { InsightsPanel, type InsightView } from "@/components/insights/InsightsP
 import { assignInsightsToDays, buildWeekLedger, collectPlanRecipes } from "@/lib/weekLedger";
 import WeeklyPlanLedger from "./WeeklyPlanLedger";
 import WeeklyShoppingSheet from "./WeeklyShoppingSheet";
-
-function startOfDay(date: Date): Date {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function mondayOfWeek(date: Date): Date {
-  const d = startOfDay(date);
-  const weekday = (d.getDay() + 6) % 7; // 0 = Montag
-  d.setDate(d.getDate() - weekday);
-  return d;
-}
+import { startOfWeek, todayForUser } from "@/lib/calendarDate";
 
 export default async function WeekPlanPage() {
   const profileId = await requireProfileId();
 
-  const monday = mondayOfWeek(new Date());
-  const today = startOfDay(new Date());
+  const now = new Date();
+  const today = todayForUser(now);
+  const monday = startOfWeek(today);
 
   // Nacheinander statt parallel: jeder Tag berücksichtigt die Rezepte der Tage davor.
   const plans = await getOrGenerateWeekPlan(profileId, monday);
@@ -33,7 +22,7 @@ export default async function WeekPlanPage() {
   const recipes = collectPlanRecipes(plans);
 
   // Jedes Insight erscheint im Tag seiner Mahlzeit statt als Block über der ganzen Woche.
-  const allInsights = await getInsightsForProfile(profileId, today);
+  const allInsights = await getInsightsForProfile(profileId, now);
   const { byDay, unassigned } = assignInsightsToDays(ledger.days, forSurface(allInsights, "PLAN"));
   // Kein Link "Wochenplan ansehen" hier - wir sind bereits auf /plan.
   const toView = (i: (typeof unassigned)[number]): InsightView => ({

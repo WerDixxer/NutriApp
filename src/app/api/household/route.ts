@@ -3,8 +3,11 @@ import { getApiUserId } from "@/lib/session";
 import { getCurrentHouseholdContext } from "@/lib/household/context";
 import { createSoloHousehold, getHousehold, updateHousehold } from "@/lib/household/householdService";
 import { prisma } from "@/lib/db";
+import { isUniqueConstraintError } from "@/lib/prismaErrors";
 import { updateHouseholdSchema } from "@/lib/validation/household";
 import { firstZodIssue } from "@/lib/validation/zodError";
+
+const ALREADY_IN_HOUSEHOLD_MESSAGE = "Du gehörst bereits einem Haushalt an.";
 
 export async function GET() {
   const ctx = await getCurrentHouseholdContext();
@@ -28,15 +31,21 @@ export async function POST(request: Request) {
   if (!userId) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
 
   const existing = await prisma.householdMember.findUnique({ where: { userId }, select: { id: true } });
-  if (existing) return NextResponse.json({ error: "Du gehörst bereits einem Haushalt an." }, { status: 409 });
+  if (existing) return NextResponse.json({ error: ALREADY_IN_HOUSEHOLD_MESSAGE }, { status: 409 });
 
   const parsed = updateHouseholdSchema.safeParse(await request.json());
   if (!parsed.success) {
     return NextResponse.json({ error: firstZodIssue(parsed.error) }, { status: 400 });
   }
 
-  const household = await createSoloHousehold(userId, parsed.data.name);
-  return NextResponse.json({ household });
+  try {
+    const household = await createSoloHousehold(userId, parsed.data.name);
+    return NextResponse.json({ household });
+  } catch (error) {
+    // Ein paralleler Request (z.B. Doppelklick) hat nach der Prüfung oben einen Haushalt angelegt.
+    if (isUniqueConstraintError(error)) return NextResponse.json({ error: ALREADY_IN_HOUSEHOLD_MESSAGE }, { status: 409 });
+    throw error;
+  }
 }
 
 /** Haushaltseinstellungen (Name, Währung) ändern - nur OWNER, serverseitig geprüft (nicht nur in der UI versteckt). */

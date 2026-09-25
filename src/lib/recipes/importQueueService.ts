@@ -1,5 +1,6 @@
-import { Prisma, type RecipeImportCandidate as ImportCandidateRow } from "@prisma/client";
+import type { Prisma, RecipeImportCandidate as ImportCandidateRow } from "@prisma/client";
 import { prisma } from "../db";
+import { isUniqueConstraintError } from "../prismaErrors";
 import type { FoodCatalog } from "./catalog";
 import type { QualityRecipeInput } from "./catalogQuality";
 import { buildRecipe, recipeIngredientRowData, recipeRowData } from "./data/build";
@@ -197,10 +198,6 @@ function cleanNote(note: string | null | undefined): string | null {
 // ---------------------------------------------------------------------------
 
 export type EnqueueResult = { ok: true; candidateId: string } | { ok: false; error: "DUPLICATE_SOURCE"; existingCandidateId: string | null };
-
-function isUniqueConstraintError(error: unknown): boolean {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
-}
 
 async function findCandidateBySourceId(candidate: ImportedRecipeCandidate): Promise<{ id: string } | null> {
   const externalId = candidate.source.externalId;

@@ -1,19 +1,16 @@
 import { NextResponse } from "next/server";
+import { parseCalendarDate, todayForUser, toDbDate } from "@/lib/calendarDate";
 import { prisma } from "@/lib/db";
 import { getApiUserId } from "@/lib/session";
 import { logPayloadSchema } from "@/lib/validation/log";
 import { firstZodIssue } from "@/lib/validation/zodError";
 
-function startOfDay(date: Date): Date {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
+/** `?date=JJJJ-MM-TT` ist ein Kalendertag des Nutzers; ohne Angabe gilt heute. */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const dateParam = searchParams.get("date");
-  const date = startOfDay(dateParam ? new Date(dateParam) : new Date());
+  const day = dateParam ? parseCalendarDate(dateParam) : todayForUser();
+  if (!day) return NextResponse.json({ error: "Datum muss ein gültiges Datum im Format JJJJ-MM-TT sein." }, { status: 400 });
 
   const userId = await getApiUserId();
   if (!userId) return NextResponse.json({ entries: [] });
@@ -22,7 +19,7 @@ export async function GET(request: Request) {
   if (!profile) return NextResponse.json({ entries: [] });
 
   const entries = await prisma.logEntry.findMany({
-    where: { profileId: profile.id, date },
+    where: { profileId: profile.id, date: toDbDate(day) },
     include: { recipe: true },
     orderBy: { createdAt: "asc" },
   });
@@ -48,7 +45,7 @@ export async function POST(request: Request) {
   const entry = await prisma.logEntry.create({
     data: {
       profileId: profile.id,
-      date: startOfDay(new Date(body.date)),
+      date: toDbDate(body.date),
       slot: body.slot,
       recipeId: body.recipeId,
       customName: body.customName,

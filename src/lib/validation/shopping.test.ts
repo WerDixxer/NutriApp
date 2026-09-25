@@ -8,9 +8,9 @@ describe("weeklyShoppingQuerySchema", () => {
     expect(result.data?.date).toBeUndefined();
   });
 
-  it("liest JJJJ-MM-TT als lokales Datum", () => {
+  it("liest JJJJ-MM-TT als Kalendertag, unabhängig von der Serverzeitzone (F-10)", () => {
     const result = weeklyShoppingQuerySchema.safeParse({ date: "2026-09-23" });
-    expect(result.data?.date).toEqual(new Date(2026, 8, 23));
+    expect(result.data?.date).toBe("2026-09-23");
   });
 
   it("lehnt falsche Formate und nicht existierende Tage ab", () => {

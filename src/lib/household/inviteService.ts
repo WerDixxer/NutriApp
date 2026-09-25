@@ -1,4 +1,5 @@
 import { prisma } from "../db";
+import { isUniqueConstraintError } from "../prismaErrors";
 import { generateInviteToken, hashInviteToken } from "./token";
 import type { CreateInviteInput } from "../validation/household";
 
@@ -91,10 +92,17 @@ export async function acceptInvite(
   const existingMembership = await prisma.householdMember.findUnique({ where: { userId }, select: { id: true } });
   if (existingMembership) return { ok: false, error: "ALREADY_IN_HOUSEHOLD" };
 
-  await prisma.$transaction([
-    prisma.householdMember.create({ data: { householdId: invite.householdId, userId, role: invite.role } }),
-    prisma.householdInvite.update({ where: { id: invite.id }, data: { acceptedAt: now } }),
-  ]);
+  try {
+    await prisma.$transaction([
+      prisma.householdMember.create({ data: { householdId: invite.householdId, userId, role: invite.role } }),
+      prisma.householdInvite.update({ where: { id: invite.id }, data: { acceptedAt: now } }),
+    ]);
+  } catch (error) {
+    // Ein paralleler Request desselben Users (z.B. Doppelklick) war schneller: HouseholdMember.userId
+    // ist unique, die Transaktion wird ganz zurückgerollt - gleiches Ergebnis wie die Prüfung oben.
+    if (isUniqueConstraintError(error)) return { ok: false, error: "ALREADY_IN_HOUSEHOLD" };
+    throw error;
+  }
 
   return { ok: true, householdId: invite.householdId, role: invite.role };
 }

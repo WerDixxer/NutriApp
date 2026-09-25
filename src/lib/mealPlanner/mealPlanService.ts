@@ -1,3 +1,4 @@
+import { toDbDate, type CalendarDate } from "../calendarDate";
 import { prisma } from "../db";
 import type { GeneratedMeal, MealPlanGenerationStatus } from "./types";
 
@@ -27,8 +28,9 @@ export function getMealPlan(householdId: string, id: string) {
 
 export interface CreateMealPlanInput {
   name?: string;
-  startDate: Date;
-  endDate: Date;
+  /** Erster und letzter Kalendertag des Plans (einschließlich), siehe src/lib/calendarDate.ts. */
+  startDate: CalendarDate;
+  endDate: CalendarDate;
   householdMemberIds: string[];
   meals: GeneratedMeal[];
   /** DRAFT bei PARTIAL/NO_VALID_PLAN-Ergebnissen, ACTIVE sonst - vom Aufrufer (Route) entschieden, siehe Abschnitt 20. */
@@ -48,13 +50,13 @@ export async function createMealPlan(householdId: string, input: CreateMealPlanI
     data: {
       householdId,
       name: input.name,
-      startDate: input.startDate,
-      endDate: input.endDate,
+      startDate: toDbDate(input.startDate),
+      endDate: toDbDate(input.endDate),
       status: input.status,
       members: { create: input.householdMemberIds.map((householdMemberId) => ({ householdMemberId })) },
       meals: {
         create: input.meals.map((meal) => ({
-          date: meal.date,
+          date: toDbDate(meal.date),
           slot: meal.slot,
           recipeId: meal.recipeId,
           portionMultiplier: meal.portionMultiplier,

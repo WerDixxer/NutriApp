@@ -155,11 +155,10 @@ describe("leaveHousehold: sichere Zustände, kein verwaister Haushalt", () => {
 });
 
 describe("createSoloHousehold", () => {
-  it("legt einen neuen Haushalt mit dem User als alleinigem OWNER an", async () => {
+  it("legt einen neuen Haushalt mit dem User als alleinigem OWNER an, in einem einzigen Schreibvorgang (R4C)", async () => {
     householdCreate.mockResolvedValueOnce({ id: "household-new", name: "Xs Haushalt" });
-    householdMemberCreate.mockResolvedValueOnce({ id: "member-new" });
     await createSoloHousehold("user-X", "Xs Haushalt");
-    expect(householdCreate).toHaveBeenCalledWith({ data: { name: "Xs Haushalt" } });
-    expect(householdMemberCreate).toHaveBeenCalledWith({ data: { householdId: "household-new", userId: "user-X", role: "OWNER" } });
+    expect(householdCreate).toHaveBeenCalledWith({ data: { name: "Xs Haushalt", members: { create: { userId: "user-X", role: "OWNER" } } } });
+    expect(householdMemberCreate).not.toHaveBeenCalled();
   });
 });

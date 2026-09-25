@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
+import type { CalendarDate } from "../calendarDate";
 import { validateGeneratedPlan } from "./validatePlan";
 import type { GeneratedMealPlan, MemberPlanningContext, PlanningContext } from "./types";
 import type { SearchableRecipe } from "../agents/recipeSearch";
 import { buildSeedCatalog } from "../recipes/data/build";
 import { createFoodPreferenceContext } from "../recipes/foodPreferences";
 
-const now = new Date("2026-09-17T12:00:00");
+const TODAY: CalendarDate = "2026-09-17";
 
 function recipe(overrides: Partial<SearchableRecipe> = {}): SearchableRecipe {
   return {
@@ -57,12 +58,12 @@ function context(overrides: Partial<PlanningContext> = {}): PlanningContext {
   };
 }
 
-const input = { startDate: now, days: 1, slots: ["LUNCH"] as const };
+const input = { startDate: TODAY, days: 1, slots: ["LUNCH"] as const };
 
 function plan(overrides: Partial<GeneratedMealPlan> = {}): GeneratedMealPlan {
   return {
     status: "SUCCESS",
-    meals: [{ date: now, slot: "LUNCH", recipeId: "recipe-1", recipeName: "Testrezept", portionMultiplier: 1, reasons: [] }],
+    meals: [{ date: TODAY, slot: "LUNCH", recipeId: "recipe-1", recipeName: "Testrezept", portionMultiplier: 1, reasons: [] }],
     unmetSlots: [],
     ...overrides,
   };
@@ -98,7 +99,7 @@ describe("validateGeneratedPlan: Hard-Constraint-Verstoß wird NIE durchgelassen
 
 describe("validateGeneratedPlan: Rezept-Existenz", () => {
   it("lehnt eine Mahlzeit mit einem Rezept ab, das nicht (mehr) im Kandidaten-Pool ist", () => {
-    const errors = validateGeneratedPlan(plan({ meals: [{ date: now, slot: "LUNCH", recipeId: "does-not-exist", recipeName: "X", portionMultiplier: 1, reasons: [] }] }), context(), {
+    const errors = validateGeneratedPlan(plan({ meals: [{ date: TODAY, slot: "LUNCH", recipeId: "does-not-exist", recipeName: "X", portionMultiplier: 1, reasons: [] }] }), context(), {
       ...input,
       slots: [...input.slots],
     });
@@ -108,7 +109,7 @@ describe("validateGeneratedPlan: Rezept-Existenz", () => {
 
 describe("validateGeneratedPlan: Portionsgröße", () => {
   it("lehnt eine Portion von 0 oder negativ ab", () => {
-    const errors = validateGeneratedPlan(plan({ meals: [{ date: now, slot: "LUNCH", recipeId: "recipe-1", recipeName: "X", portionMultiplier: 0, reasons: [] }] }), context(), {
+    const errors = validateGeneratedPlan(plan({ meals: [{ date: TODAY, slot: "LUNCH", recipeId: "recipe-1", recipeName: "X", portionMultiplier: 0, reasons: [] }] }), context(), {
       ...input,
       slots: [...input.slots],
     });
@@ -116,7 +117,7 @@ describe("validateGeneratedPlan: Portionsgröße", () => {
   });
 
   it("lehnt eine nicht-endliche Portion ab (z.B. NaN)", () => {
-    const errors = validateGeneratedPlan(plan({ meals: [{ date: now, slot: "LUNCH", recipeId: "recipe-1", recipeName: "X", portionMultiplier: NaN, reasons: [] }] }), context(), {
+    const errors = validateGeneratedPlan(plan({ meals: [{ date: TODAY, slot: "LUNCH", recipeId: "recipe-1", recipeName: "X", portionMultiplier: NaN, reasons: [] }] }), context(), {
       ...input,
       slots: [...input.slots],
     });
@@ -126,7 +127,7 @@ describe("validateGeneratedPlan: Portionsgröße", () => {
 
 describe("validateGeneratedPlan: Datum/Slot außerhalb des Zeitraums", () => {
   it("lehnt ein Datum außerhalb des Planungszeitraums ab", () => {
-    const farFuture = new Date("2027-01-01");
+    const farFuture: CalendarDate = "2027-01-01";
     const errors = validateGeneratedPlan(plan({ meals: [{ date: farFuture, slot: "LUNCH", recipeId: "recipe-1", recipeName: "X", portionMultiplier: 1, reasons: [] }] }), context(), {
       ...input,
       slots: [...input.slots],
@@ -135,7 +136,7 @@ describe("validateGeneratedPlan: Datum/Slot außerhalb des Zeitraums", () => {
   });
 
   it("lehnt einen nicht angeforderten Slot ab", () => {
-    const errors = validateGeneratedPlan(plan({ meals: [{ date: now, slot: "DINNER", recipeId: "recipe-1", recipeName: "X", portionMultiplier: 1, reasons: [] }] }), context(), {
+    const errors = validateGeneratedPlan(plan({ meals: [{ date: TODAY, slot: "DINNER", recipeId: "recipe-1", recipeName: "X", portionMultiplier: 1, reasons: [] }] }), context(), {
       ...input,
       slots: [...input.slots],
     });

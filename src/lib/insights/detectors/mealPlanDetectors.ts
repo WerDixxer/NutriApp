@@ -1,4 +1,5 @@
 import type { PantryUnit } from "@prisma/client";
+import { daysBetween, fromDbDate, todayForUser, weekdayIndex } from "../../calendarDate";
 import { aggregateIngredients, type MealForAggregation } from "../../mealPrep/aggregation";
 import { enrichAggregatedIngredients, pantryItemMatchesIngredient, type PantryItemForMatch } from "../../mealPrep/enrichment";
 import { normalizeIngredientKey, parseIngredientLine } from "../../mealPrep/ingredientParser";
@@ -8,6 +9,7 @@ import type { Insight } from "../types";
 
 export interface MealPlanInsightItem {
   id: string;
+  /** Kalendertag der Mahlzeit als DB-Wert (MealPlanDay.date, UTC-Mitternacht, siehe calendarDate.ts). */
   date: Date;
   slot: string;
   recipeId: string;
@@ -37,20 +39,14 @@ export interface PantryInsightStock {
  */
 const MAX_MISSING_FOR_INSIGHT = 2;
 
-function startOfDay(date: Date): Date {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
+/** Kalendertage vom heutigen Tag des Nutzers (`now` ist ein Zeitpunkt) bis zum Tag der Mahlzeit. */
+function daysUntilMeal(meal: MealPlanInsightItem, now: Date): number {
+  return daysBetween(todayForUser(now), fromDbDate(meal.date));
 }
 
-function daysBetween(a: Date, b: Date): number {
-  const msPerDay = 1000 * 60 * 60 * 24;
-  return Math.round((startOfDay(b).getTime() - startOfDay(a).getTime()) / msPerDay);
-}
-
-function weekdayLabel(date: Date): string {
-  const jsDay = date.getDay(); // 0 = So
-  return WEEKDAY_LABELS[(jsDay + 6) % 7];
+/** Wochentag eines als Kalendertag gespeicherten Datums (Mahlzeit, Ablaufdatum). */
+function weekdayLabel(storedDate: Date): string {
+  return WEEKDAY_LABELS[weekdayIndex(fromDbDate(storedDate))];
 }
 
 function toMatchInput(pantryItems: PantryInsightStock[]): PantryItemForMatch[] {
@@ -103,7 +99,7 @@ export function detectMealMissingIngredients(
   const insights: Insight[] = [];
 
   for (const meal of meals) {
-    if (daysBetween(now, meal.date) !== 0) continue;
+    if (daysUntilMeal(meal, now) !== 0) continue;
     const coverage = evaluateMealCoverage(meal, pantryItems, catalog);
     if (!coverage || coverage.missing.length === 0 || coverage.missing.length > MAX_MISSING_FOR_INSIGHT) continue;
 
@@ -142,7 +138,7 @@ export function detectMealFullyCovered(
   const insights: Insight[] = [];
 
   for (const meal of meals) {
-    if (daysBetween(now, meal.date) !== 0) continue;
+    if (daysUntilMeal(meal, now) !== 0) continue;
     const coverage = evaluateMealCoverage(meal, pantryItems, catalog);
     if (!coverage || coverage.missing.length > 0) continue;
 
@@ -181,8 +177,8 @@ export function detectMealIngredientExpiresBeforeMeal(
   const insights: Insight[] = [];
 
   for (const meal of meals) {
-    const daysUntilMeal = daysBetween(now, meal.date);
-    if (daysUntilMeal < 0) continue; // Mahlzeit liegt in der Vergangenheit
+    const daysUntil = daysUntilMeal(meal, now);
+    if (daysUntil < 0) continue; // Mahlzeit liegt in der Vergangenheit
 
     for (const raw of meal.ingredients) {
       const parsed = parseIngredientLine(raw);
@@ -192,7 +188,7 @@ export function detectMealIngredientExpiresBeforeMeal(
       for (const item of pantryItems) {
         if (item.remainingQuantity <= 0 || !item.expirationDate) continue;
         if (!pantryItemMatchesIngredient(item, normalizedName, catalog)) continue;
-        if (item.expirationDate >= meal.date) continue;
+        if (fromDbDate(item.expirationDate) >= fromDbDate(meal.date)) continue; // Kalendertage "JJJJ-MM-TT" sind lexikografisch sortierbar
 
         const slotLabel = SLOT_LABELS[meal.slot] ?? meal.slot;
         const weekday = weekdayLabel(meal.date);
@@ -203,7 +199,7 @@ export function detectMealIngredientExpiresBeforeMeal(
           id: `mealplan:expiry-conflict:${meal.id}:${item.id}`,
           type: "MEAL_PLAN_INGREDIENT_EXPIRES_BEFORE_MEAL",
           category: "MEAL_PLAN",
-          priority: daysUntilMeal <= 1 ? "critical" : "important",
+          priority: daysUntil <= 1 ? "critical" : "important",
           message,
           context: {
             mealPlanItemId: meal.id,

@@ -1,3 +1,4 @@
+import { addDays, type CalendarDate } from "../calendarDate";
 import { buildPlanningContext } from "./planningContext";
 import { generateMealPlan } from "./plannerEngine";
 import { validateGeneratedPlan } from "./validatePlan";
@@ -8,7 +9,8 @@ export interface GenerateMealPlanRequest {
   householdId: string;
   /** null = alle Mitglieder des Haushalts (Abschnitt 23: "Falls keine memberIds angegeben"). */
   householdMemberIds: string[] | null;
-  startDate: Date;
+  /** Erster Kalendertag des Plans (Nutzerzeit). */
+  startDate: CalendarDate;
   days: number;
   slots: PlannableMealSlot[];
   name?: string;
@@ -55,14 +57,10 @@ export async function generateAndSaveMealPlan(request: GenerateMealPlanRequest, 
     };
   }
 
-  const endDate = new Date(request.startDate);
-  endDate.setDate(endDate.getDate() + request.days - 1);
-  endDate.setHours(23, 59, 59, 999);
-
   const plan = await createMealPlan(request.householdId, {
     name: request.name,
     startDate: request.startDate,
-    endDate,
+    endDate: addDays(request.startDate, request.days - 1),
     householdMemberIds: context.members.map((m) => m.householdMemberId),
     meals: generated.meals,
     status: generated.status === "SUCCESS" ? "ACTIVE" : "DRAFT",

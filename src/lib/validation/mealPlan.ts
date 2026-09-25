@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { calendarDateSchema } from "./calendarDate";
 
 export const plannableMealSlotSchema = z.enum(["BREAKFAST", "LUNCH", "DINNER", "SNACK"]);
 
@@ -14,7 +15,8 @@ export const plannableMealSlotSchema = z.enum(["BREAKFAST", "LUNCH", "DINNER", "
  * zu bauen wäre eine vorgetäuschte Funktion ohne reale Wirkung.
  */
 export const generateMealPlanSchema = z.object({
-  startDate: z.coerce.date(),
+  /** Erster Kalendertag des Plans ("JJJJ-MM-TT", Nutzerzeit), kein Zeitpunkt. */
+  startDate: calendarDateSchema,
   days: z.number().int().min(1, "Mindestens 1 Tag.").max(14, "Maximal 14 Tage."),
   mealTypes: z.array(plannableMealSlotSchema).min(1, "Mindestens ein Mahlzeiten-Typ.").max(4),
   memberIds: z.array(z.string().min(1)).max(20).optional(),

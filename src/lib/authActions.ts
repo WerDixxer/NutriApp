@@ -7,6 +7,7 @@ import { auth, signIn, signOut } from "./auth";
 import { prisma } from "./db";
 import { createSoloHousehold } from "./household/householdService";
 import { acceptInvite } from "./household/inviteService";
+import { isUniqueConstraintError } from "./prismaErrors";
 import { loginSchema, registerSchema, setupAccountSchema } from "./validation/auth";
 import { acceptInviteSchema, registerViaInviteSchema } from "./validation/household";
 
@@ -42,8 +43,18 @@ export async function registerAction(formData: FormData) {
   if (existing) redirect("/register?error=exists");
 
   const passwordHash = await bcrypt.hash(password, 12);
-  const user = await prisma.user.create({ data: { name, email, passwordHash } });
-  await createSoloHousehold(user.id, `${name}s Haushalt`);
+  // Konto und eigener Haushalt entstehen gemeinsam oder gar nicht. Hat ein paralleler Request
+  // (z.B. doppelt abgeschicktes Formular) die E-Mail inzwischen registriert, gilt dasselbe wie
+  // bei der Prüfung oben.
+  await prisma
+    .$transaction(async (tx) => {
+      const user = await tx.user.create({ data: { name, email, passwordHash } });
+      await createSoloHousehold(user.id, `${name}s Haushalt`, tx);
+    })
+    .catch((error: unknown) => {
+      if (isUniqueConstraintError(error)) redirect("/register?error=exists");
+      throw error;
+    });
 
   try {
     await signIn("credentials", { email, password, redirectTo: "/onboarding" });
@@ -72,7 +83,16 @@ export async function setupAccountAction(formData: FormData) {
   if (emailTaken) redirect("/setup-account?error=exists");
 
   const passwordHash = await bcrypt.hash(password, 12);
-  await prisma.user.update({ where: { id: claimable.id }, data: { email, passwordHash } });
+  // Nur übernehmen, solange der Account noch kein Passwort hat: Zwei parallele Einrichtungen dürfen
+  // sich nicht gegenseitig E-Mail und Passwort überschreiben. Wer zuerst schreibt, hat den Account;
+  // für den anderen ist - wie bei einem späteren Aufruf - nichts mehr einzurichten.
+  const claimed = await prisma.user
+    .updateMany({ where: { id: claimable.id, passwordHash: null }, data: { email, passwordHash } })
+    .catch((error: unknown) => {
+      if (isUniqueConstraintError(error)) redirect("/setup-account?error=exists");
+      throw error;
+    });
+  if (claimed.count === 0) redirect("/register");
 
   try {
     await signIn("credentials", { email, password, redirectTo: "/dashboard" });
@@ -108,7 +128,11 @@ export async function registerViaInviteAction(formData: FormData) {
   if (existing) redirect(`/invite/${token}?error=exists`);
 
   const passwordHash = await bcrypt.hash(password, 12);
-  const user = await prisma.user.create({ data: { name, email, passwordHash } });
+  const user = await prisma.user.create({ data: { name, email, passwordHash } }).catch((error: unknown) => {
+    // Paralleler Request (z.B. doppelt abgeschickt) hat die E-Mail inzwischen registriert.
+    if (isUniqueConstraintError(error)) redirect(`/invite/${token}?error=exists`);
+    throw error;
+  });
 
   const accepted = await acceptInvite(token, user.id, email);
   if (!accepted.ok) {

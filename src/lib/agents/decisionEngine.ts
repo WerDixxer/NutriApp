@@ -1,3 +1,4 @@
+import { addDays, todayForUser, toDbDate } from "../calendarDate";
 import { prisma } from "../db";
 import { computeSingleItemScale } from "../foodMatching";
 import type { MacroTarget } from "../nutrition";
@@ -54,12 +55,10 @@ async function resolveTargets(profileId: string, query: AssistantQuery | undefin
 }
 
 async function loadRecentRecipeCounts(profileId: string, now: Date = new Date()): Promise<Map<string, number>> {
-  const since = new Date(now);
-  since.setDate(since.getDate() - VARIETY_WINDOW_DAYS);
-  since.setHours(0, 0, 0, 0);
+  const since = addDays(todayForUser(now), -VARIETY_WINDOW_DAYS);
 
   const entries = await prisma.logEntry.findMany({
-    where: { profileId, date: { gte: since }, recipeId: { not: null } },
+    where: { profileId, date: { gte: toDbDate(since) }, recipeId: { not: null } },
     select: { recipeId: true },
   });
 

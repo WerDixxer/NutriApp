@@ -1,3 +1,4 @@
+import { addDays, todayForUser, toDbDate } from "../calendarDate";
 import { prisma } from "../db";
 import { matchesAllergen } from "../foodMatching";
 import { getBudgetSummary } from "../budget/budgetService";
@@ -17,12 +18,6 @@ import type { Insight } from "./types";
 
 const MEAL_PLAN_LOOKAHEAD_DAYS = 6;
 const RECIPE_CANDIDATE_LIMIT = 200;
-
-function startOfDay(date: Date): Date {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
 
 /**
  * Der EINE Einstiegspunkt für alle vier Oberflächen (Dashboard/Pantry/Plan/
@@ -53,9 +48,8 @@ export async function getInsightsForProfile(profileId: string, now: Date = new D
 
   if (membership) {
     const householdId = membership.householdId;
-    const today = startOfDay(now);
-    const windowEnd = new Date(today);
-    windowEnd.setDate(windowEnd.getDate() + MEAL_PLAN_LOOKAHEAD_DAYS);
+    const today = todayForUser(now);
+    const windowEnd = addDays(today, MEAL_PLAN_LOOKAHEAD_DAYS);
 
     const [pantryItems, budgetSummary, mealPlanDays, recipes, catalog] = await Promise.all([
       prisma.pantryItem.findMany({
@@ -64,7 +58,7 @@ export async function getInsightsForProfile(profileId: string, now: Date = new D
       }),
       getBudgetSummary(householdId, now),
       prisma.mealPlanDay.findMany({
-        where: { profileId, date: { gte: today, lte: windowEnd } },
+        where: { profileId, date: { gte: toDbDate(today), lte: toDbDate(windowEnd) } },
         include: { items: { include: { recipe: true } } },
       }),
       prisma.recipe.findMany({

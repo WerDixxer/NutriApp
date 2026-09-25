@@ -1,3 +1,4 @@
+import { addDays, todayForUser, type CalendarDate } from "../calendarDate";
 import { computeJointPortionScales, type RecipeCandidate } from "../planner";
 import type { MacroTarget } from "../nutrition";
 import type { SearchableRecipe } from "../agents/recipeSearch";
@@ -7,20 +8,11 @@ import { mainIngredientToken, scoreCandidate, type MealSlotScoringContext } from
 import type { GeneratedMeal, GeneratedMealPlan, PlannableMealSlot, PlanningContext, UnmetSlot } from "./types";
 
 export interface GeneratePlanInput {
-  startDate: Date;
+  /** Erster Kalendertag des Plans (Nutzerzeit, siehe src/lib/calendarDate.ts). */
+  startDate: CalendarDate;
   days: number;
   slots: PlannableMealSlot[];
   maxCookingTimeMin?: number;
-}
-
-function startOfDay(date: Date): Date {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function isSameDay(a: Date, b: Date): boolean {
-  return startOfDay(a).getTime() === startOfDay(b).getTime();
 }
 
 function sumTargets(targets: MacroTarget[]): MacroTarget {
@@ -75,12 +67,13 @@ export function generateMealPlan(context: PlanningContext, input: GeneratePlanIn
   const usedIngredientsInPlan = new Set<string>();
   const inPlanRecipeCounts = new Map<string, number>();
   let recentMainIngredients: string[] = [];
+  const today = todayForUser(now);
 
   for (let dayIndex = 0; dayIndex < input.days; dayIndex++) {
-    const date = new Date(input.startDate);
-    date.setDate(date.getDate() + dayIndex);
+    const date = addDays(input.startDate, dayIndex);
 
-    const dailyTargets = context.members.map((m) => (isSameDay(date, now) ? m.remainingTodayTarget : m.fullDailyTarget));
+    // Für heute zählt, was die Mitglieder bereits gegessen haben; für alle anderen Tage das volle Ziel.
+    const dailyTargets = context.members.map((m) => (date === today ? m.remainingTodayTarget : m.fullDailyTarget));
     const combinedDailyTarget = sumTargets(dailyTargets);
     const slotTargets = buildSlotTargets(combinedDailyTarget, input.slots);
 

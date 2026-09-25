@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { getApiUserId } from "@/lib/session";
 import { recipePayloadSchema } from "@/lib/validation/recipes";
@@ -73,6 +74,26 @@ export async function DELETE(request: Request) {
   const profile = await prisma.profile.findUnique({ where: { userId } });
   if (!profile) return NextResponse.json({ error: "Kein Profil vorhanden." }, { status: 404 });
 
-  await prisma.recipe.deleteMany({ where: { id, ownerProfileId: profile.id, isCustom: true } });
+  try {
+    await prisma.recipe.deleteMany({ where: { id, ownerProfileId: profile.id, isCustom: true } });
+  } catch (error) {
+    if (isForeignKeyConstraintError(error)) {
+      return NextResponse.json(
+        { error: "Das Rezept kann nicht gelöscht werden, weil es noch in einem Essens- oder Wochenplan verwendet wird." },
+        { status: 409 },
+      );
+    }
+    throw error;
+  }
   return NextResponse.json({ ok: true });
+}
+
+/**
+ * Ein eigenes Rezept kann nur an Planeinträgen hängen bleiben: MealPlanItem (Tages-/Wochenplan) und
+ * MealPlanMeal (Essensplan des Haushalts) verweisen ohne onDelete auf Recipe, also Restrict. Alle
+ * anderen Verweise auf Recipe werden beim Löschen mitgelöscht (Zutatenzeilen) oder geleert
+ * (Log-Einträge, Import-Kandidaten). Belegt in src/test/referentialIntegrity.test.ts.
+ */
+function isForeignKeyConstraintError(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003";
 }

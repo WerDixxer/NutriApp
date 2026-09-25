@@ -180,7 +180,14 @@ Besonderheiten:
   eine **temporäre Datenbank im Temp-Verzeichnis des Betriebssystems** an (Schema per
   `npx prisma db push`) und löschen sie danach wieder. `prisma/dev.db` wird dabei nie geöffnet;
   der Helfer `src/test/isolatedDatabase.ts` bricht ab, wenn die URL nicht im Temp-Verzeichnis
-  liegt. Voraussetzung ist ein generierter Prisma Client.
+  liegt. Zusätzlich setzt `vitest.config.ts` `DATABASE_URL` für alle Tests auf einen ungültigen
+  Sperrwert: Ein PrismaClient ohne explizite Test-URL scheitert sofort, statt die Datenbank aus
+  `.env` zu öffnen. Voraussetzung ist ein generierter Prisma Client.
+- Tests des Datenbankverhaltens selbst liegen in `src/test/`: `referentialIntegrity.test.ts`
+  (Foreign Keys, heutiges Löschverhalten von Rezepten und Accounts), `concurrentWrites.test.ts`
+  (zwei gleichzeitige Requests gegen Unique-Indizes, z.B. Tagesplan, Registrierung, Einladung),
+  `legacySeed.test.ts` (Seed). Spätere Migrations- und Seed-Tests gehören ebenfalls dorthin und
+  nutzen denselben Helfer.
 - `npm run test:e2e` (Playwright, `e2e/`) ist **derzeit veraltet** und kein verlässlicher Test:
   die Erwartungen passen nicht mehr zur aktuellen Login-/Registrierungsseite, der Test läuft gegen
   den Dev-Server mit der echten `prisma/dev.db` und braucht zusätzlich installierte
@@ -216,8 +223,14 @@ Es gibt derzeit **keinen dokumentierten und geprüften Produktionsbetrieb**. Bek
   reproduzierbare, prüfbare Migrationsfolge für eine produktive Datenbank.
 - **SQLite und SQLite-geprägtes Schema:** eine lokale Datei, JSON-Daten als Strings. Ein Wechsel
   auf eine andere Datenbank ist mehr als eine Änderung des `provider`.
-- **Serverzeit statt Nutzerzeitzone:** Tagesgrenzen (Pläne, Log, Budgetzeiträume, Ablaufdaten)
-  rechnen in der lokalen Zeit des Servers.
+- **Kalendertage (F-10):** Tagespläne, Wochenplan, Log und Haushalts-Essenspläne gehören zum
+  Kalendertag des Nutzers und hängen nicht mehr von der Serverzeitzone ab
+  (`src/lib/calendarDate.ts`, in der DB als UTC-Mitternacht). Eine Zeitzone pro Nutzer gibt es noch
+  nicht: VYN nimmt für alle Nutzer `Europe/Berlin` an. Budgetzeiträume und Ablaufdaten im Vorrat
+  rechnen weiterhin in der lokalen Zeit des Servers. Vor F-10 gespeicherte Tagespläne und
+  Log-Einträge lagen auf Mitternacht Serverzeit; die lokale Entwicklungsdatenbank wurde einmalig
+  umgerechnet (Regel: `src/scripts/f10CalendarDateCorrection.test.ts`). Andere Datenbanken mit
+  Daten von vor F-10 bräuchten dieselbe Umrechnung.
 - **Auth:** `AUTH_SECRET` ist Pflicht; bei Selbst-Hosting außerdem `AUTH_TRUST_HOST` oder
   `AUTH_URL` (siehe Tabelle). Die Registrierung ist offen.
 - **Keine Prüfung der Umgebungsvariablen beim Start:** fehlende oder falsche Werte fallen erst zur

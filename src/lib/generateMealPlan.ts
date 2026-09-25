@@ -1,5 +1,7 @@
-import type { MealSlot } from "@prisma/client";
+import type { MealSlot, Prisma } from "@prisma/client";
+import { addDays, fromDbDate, startOfWeek, toDbDate, weekdayIndex, type CalendarDate } from "./calendarDate";
 import { prisma } from "./db";
+import { isUniqueConstraintError } from "./prismaErrors";
 import { calcFullTargets } from "./nutrition";
 import { matchesAllergen } from "./foodMatching";
 import { createFoodPreferenceContext, isDislikedHit, isLikedHit, type FoodPreferenceContext } from "./recipes/foodPreferences";
@@ -15,12 +17,6 @@ import {
   type RecipeCandidate,
 } from "./planner";
 
-function startOfDay(date: Date): Date {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
 /**
  * Rezept-ID -> wie oft das Rezept in der laufenden Wochenplanung bereits
  * gewählt wurde. Gilt nur für einen Generierungslauf (nie modulweit oder in
@@ -33,20 +29,11 @@ function addUsage(usage: RecipeUsage, recipeIds: string[]) {
   for (const id of recipeIds) usage.set(id, (usage.get(id) ?? 0) + 1);
 }
 
-/** Montag bis Sonntag (lokal, 00:00) der Woche, die `day` enthält, wie /plan sie darstellt. */
-function weekBounds(day: Date): { start: Date; end: Date } {
-  const start = startOfDay(day);
-  start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
-  const end = new Date(start);
-  end.setDate(start.getDate() + 6);
-  return { start, end };
-}
-
-/** Bereits gespeicherte Tage derselben Woche, damit auch einzeln erzeugte Tage (Dashboard) zur Woche passen. */
-async function loadWeekUsage(profileId: string, day: Date): Promise<RecipeUsage> {
-  const { start, end } = weekBounds(day);
+/** Bereits gespeicherte Tage derselben Woche (Montag bis Sonntag), damit auch einzeln erzeugte Tage (Dashboard) zur Woche passen. */
+async function loadWeekUsage(profileId: string, day: CalendarDate): Promise<RecipeUsage> {
+  const monday = startOfWeek(day);
   const days = await prisma.mealPlanDay.findMany({
-    where: { profileId, date: { gte: start, lte: end } },
+    where: { profileId, date: { gte: toDbDate(monday), lte: toDbDate(addDays(monday, 6)) } },
     select: { items: { select: { recipeId: true } } },
   });
   const usage: RecipeUsage = new Map();
@@ -54,23 +41,48 @@ async function loadWeekUsage(profileId: string, day: Date): Promise<RecipeUsage>
   return usage;
 }
 
+const DAY_PLAN_INCLUDE = { items: { include: { recipe: true }, orderBy: { time: "asc" } } } satisfies Prisma.MealPlanDayInclude;
+
+function findStoredDayPlan(profileId: string, day: CalendarDate) {
+  return prisma.mealPlanDay.findUnique({ where: { profileId_date: { profileId, date: toDbDate(day) } }, include: DAY_PLAN_INCLUDE });
+}
+
+type NewDayPlan = Omit<Prisma.MealPlanDayUncheckedCreateInput, "profileId" | "date">;
+
+/**
+ * Speichert einen neu erzeugten Tag. Hat ein paralleler Request (z.B. Dashboard und Food Assistant
+ * gleichzeitig, oder /plan in zwei Tabs) denselben Tag inzwischen gespeichert, verletzt das den
+ * Unique-Index [profileId, date]. Dann gilt der zuerst gespeicherte Plan, damit beide Aufrufe
+ * denselben stabilen Tag zeigen - genau wie bei einem Aufruf kurz danach.
+ */
+async function saveDayPlan(profileId: string, day: CalendarDate, plan: NewDayPlan) {
+  try {
+    return await prisma.mealPlanDay.create({ data: { profileId, date: toDbDate(day), ...plan }, include: DAY_PLAN_INCLUDE });
+  } catch (error) {
+    if (!isUniqueConstraintError(error)) throw error;
+    const savedConcurrently = await findStoredDayPlan(profileId, day);
+    if (!savedConcurrently) throw error;
+    return savedConcurrently;
+  }
+}
+
 /**
  * Holt den Plan für einen Tag aus der DB, oder generiert und speichert ihn,
  * falls noch keiner existiert. Ein einmal generierter Tag bleibt stabil,
  * damit Nutzer sich darauf verlassen können (kein Neu-Mischen bei jedem Aufruf).
  *
+ * `day` ist ein Kalendertag des Nutzers (z.B. `todayForUser()`), kein Zeitpunkt:
+ * Ein Plan gehört zu Profil + Kalendertag, unabhängig von der Serverzeitzone.
+ *
  * `weekUsage`: Rezeptverwendung der laufenden Wochenplanung (siehe
  * getOrGenerateWeekPlan). Wird sie nicht übergeben, wird sie aus den bereits
  * gespeicherten Tagen derselben Woche gelesen. Ein neu erzeugter Tag trägt
  * seine Rezepte in `weekUsage` ein; ein bereits gespeicherter Tag ändert sie nicht.
+ * Hat ein paralleler Request den Tag während der Erzeugung gespeichert, zählen
+ * dessen Rezepte (sie standen noch nicht in `weekUsage`).
  */
-export async function getOrGenerateDayPlan(profileId: string, date: Date, weekUsage?: RecipeUsage) {
-  const day = startOfDay(date);
-
-  const existing = await prisma.mealPlanDay.findUnique({
-    where: { profileId_date: { profileId, date: day } },
-    include: { items: { include: { recipe: true }, orderBy: { time: "asc" } } },
-  });
+export async function getOrGenerateDayPlan(profileId: string, day: CalendarDate, weekUsage?: RecipeUsage) {
+  const existing = await findStoredDayPlan(profileId, day);
   if (existing) return existing;
 
   const usage = weekUsage ?? (await loadWeekUsage(profileId, day));
@@ -96,7 +108,7 @@ export async function getOrGenerateDayPlan(profileId: string, date: Date, weekUs
     sportType: profile.sportType,
   });
 
-  const weekday = (day.getDay() + 6) % 7; // JS: 0=So -> wir wollen 0=Mo
+  const weekday = weekdayIndex(day); // 0 = Montag, wie TrainingSession.weekday
   const todaysSession = profile.trainingSessions.find((s) => s.weekday === weekday);
 
   const slotTargets = buildDayPlan(
@@ -218,28 +230,23 @@ export async function getOrGenerateDayPlan(profileId: string, date: Date, weekUs
   }
   const { items: chosenItems, scales: jointScales } = picked;
 
-  const created = await prisma.mealPlanDay.create({
-    data: {
-      profileId,
-      date: day,
-      targetKcal: targets.kcal,
-      targetProteinG: targets.proteinG,
-      targetCarbsG: targets.carbsG,
-      targetFatG: targets.fatG,
-      items: {
-        create: chosenItems.map((item, i) => ({
-          slot: item.slot,
-          time: item.time,
-          recipeId: item.recipeId,
-          portionMultiplier: jointScales[i] ?? item.priorScale,
-        })),
-      },
+  const saved = await saveDayPlan(profileId, day, {
+    targetKcal: targets.kcal,
+    targetProteinG: targets.proteinG,
+    targetCarbsG: targets.carbsG,
+    targetFatG: targets.fatG,
+    items: {
+      create: chosenItems.map((item, i) => ({
+        slot: item.slot,
+        time: item.time,
+        recipeId: item.recipeId,
+        portionMultiplier: jointScales[i] ?? item.priorScale,
+      })),
     },
-    include: { items: { include: { recipe: true }, orderBy: { time: "asc" } } },
   });
 
-  addUsage(usage, created.items.map((item) => item.recipeId));
-  return created;
+  addUsage(usage, saved.items.map((item) => item.recipeId));
+  return saved;
 }
 
 /**
@@ -249,26 +256,21 @@ export async function getOrGenerateDayPlan(profileId: string, date: Date, weekUs
  * unverändert, zählen aber ebenfalls für die Rezeptverwendung, auch wenn sie
  * später in der Woche liegen als ein neu erzeugter Tag.
  */
-export async function getOrGenerateWeekPlan(profileId: string, weekStart: Date) {
-  const monday = startOfDay(weekStart);
-  const dates = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(monday);
-    d.setDate(monday.getDate() + i);
-    return d;
-  });
+export async function getOrGenerateWeekPlan(profileId: string, weekStart: CalendarDate) {
+  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
   const stored = await prisma.mealPlanDay.findMany({
-    where: { profileId, date: { gte: dates[0], lte: dates[6] } },
-    include: { items: { include: { recipe: true }, orderBy: { time: "asc" } } },
+    where: { profileId, date: { gte: toDbDate(days[0]), lte: toDbDate(days[6]) } },
+    include: DAY_PLAN_INCLUDE,
   });
-  const storedByTime = new Map(stored.map((d) => [d.date.getTime(), d]));
+  const storedByDay = new Map(stored.map((d) => [fromDbDate(d.date), d]));
 
   const usage: RecipeUsage = new Map();
   for (const d of stored) addUsage(usage, d.items.map((item) => item.recipeId));
 
   const plans = [];
-  for (const date of dates) {
-    plans.push(storedByTime.get(date.getTime()) ?? (await getOrGenerateDayPlan(profileId, date, usage)));
+  for (const day of days) {
+    plans.push(storedByDay.get(day) ?? (await getOrGenerateDayPlan(profileId, day, usage)));
   }
   return plans;
 }

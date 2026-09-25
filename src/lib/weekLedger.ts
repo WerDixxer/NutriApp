@@ -1,3 +1,4 @@
+import { addDays, calendarDateParts, type CalendarDate } from "./calendarDate";
 import { SLOT_LABELS, WEEKDAY_LABELS } from "./labels";
 import type { DbRecipeLike } from "./recipeDetail";
 
@@ -52,8 +53,8 @@ export interface LedgerMeal {
 }
 
 export interface LedgerDay {
-  /** Lokales Datum als JJJJ-MM-TT. */
-  key: string;
+  /** Kalendertag des Nutzers als JJJJ-MM-TT. */
+  key: CalendarDate;
   weekdayShort: string;
   weekdayLabel: string;
   dayOfMonth: number;
@@ -75,25 +76,19 @@ export interface WeekLedger {
   initialOpenKey: string | null;
 }
 
-function pad(n: number): string {
-  return String(n).padStart(2, "0");
-}
-
-export function dayKey(date: Date): string {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
 /** "14.–20. September", "28. September–4. Oktober" oder mit Jahren, wenn die Woche den Jahreswechsel überspannt. */
-export function formatWeekRange(start: Date, end: Date): string {
-  const startMonth = MONTH_LABELS[start.getMonth()];
-  const endMonth = MONTH_LABELS[end.getMonth()];
-  if (start.getFullYear() !== end.getFullYear()) {
-    return `${start.getDate()}. ${startMonth} ${start.getFullYear()}–${end.getDate()}. ${endMonth} ${end.getFullYear()}`;
+export function formatWeekRange(startDate: CalendarDate, endDate: CalendarDate): string {
+  const start = calendarDateParts(startDate);
+  const end = calendarDateParts(endDate);
+  const startMonth = MONTH_LABELS[start.month - 1];
+  const endMonth = MONTH_LABELS[end.month - 1];
+  if (start.year !== end.year) {
+    return `${start.day}. ${startMonth} ${start.year}–${end.day}. ${endMonth} ${end.year}`;
   }
-  if (start.getMonth() !== end.getMonth()) {
-    return `${start.getDate()}. ${startMonth}–${end.getDate()}. ${endMonth}`;
+  if (start.month !== end.month) {
+    return `${start.day}. ${startMonth}–${end.day}. ${endMonth}`;
   }
-  return `${start.getDate()}.–${end.getDate()}. ${endMonth}`;
+  return `${start.day}.–${end.day}. ${endMonth}`;
 }
 
 /** Ohne abschließenden Klammerzusatz: "Rice Paper Dumplings (Knusprige Reispapier-Taschen)" -> "Rice Paper Dumplings". */
@@ -134,35 +129,33 @@ function buildHeadline(meals: LedgerMeal[]): { headline: string; extraCount: num
 
 /**
  * `plans` sind die Tage ab `weekStart` (Montag) in Reihenfolge, wie sie
- * getOrGenerateWeekPlan() liefert. `today` bestimmt, welcher Tag als heute
- * gilt und standardmäßig geöffnet ist.
+ * getOrGenerateWeekPlan() liefert. `today` (Kalendertag des Nutzers) bestimmt,
+ * welcher Tag als heute gilt und standardmäßig geöffnet ist.
  */
 export function buildWeekLedger({
   weekStart,
   plans,
   today,
 }: {
-  weekStart: Date;
+  weekStart: CalendarDate;
   plans: { items: LedgerPlanItem[] }[];
-  today: Date;
+  today: CalendarDate;
 }): WeekLedger {
-  const todayKey = dayKey(today);
-
   const days: LedgerDay[] = plans.map((plan, i) => {
-    const date = new Date(weekStart);
-    date.setDate(weekStart.getDate() + i);
+    const date = addDays(weekStart, i);
+    const { month, day } = calendarDateParts(date);
 
     const meals = buildMeals(plan.items);
     const { headline, extraCount } = buildHeadline(meals);
     const kcalTotal = Math.round(plan.items.reduce((sum, item) => sum + item.recipe.kcal * item.portionMultiplier, 0));
 
     return {
-      key: dayKey(date),
+      key: date,
       weekdayShort: WEEKDAY_LABELS[i]?.slice(0, 2) ?? "",
       weekdayLabel: WEEKDAY_LABELS[i] ?? "",
-      dayOfMonth: date.getDate(),
-      dateLabel: `${date.getDate()}. ${MONTH_LABELS[date.getMonth()]}`,
-      isToday: dayKey(date) === todayKey,
+      dayOfMonth: day,
+      dateLabel: `${day}. ${MONTH_LABELS[month - 1]}`,
+      isToday: date === today,
       hasTraining: plan.items.some((item) => TRAINING_SLOTS.has(item.slot)),
       kcalTotal,
       headline,
@@ -171,8 +164,7 @@ export function buildWeekLedger({
     };
   });
 
-  const last = new Date(weekStart);
-  last.setDate(weekStart.getDate() + Math.max(plans.length - 1, 0));
+  const last = addDays(weekStart, Math.max(plans.length - 1, 0));
 
   const todayDay = days.find((d) => d.isToday);
   return {

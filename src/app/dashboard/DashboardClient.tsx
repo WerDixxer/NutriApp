@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { InsightsPanel, type InsightView } from "@/components/insights/InsightsPanel";
 import { SLOT_LABELS } from "@/lib/labels";
 import { approxGrams, approxKcal } from "@/lib/format";
+import type { CalendarDate } from "@/lib/calendarDate";
 
 export interface PlanItemView {
   id: string;
@@ -155,7 +156,8 @@ export default function DashboardClient({
   initialEntries,
   insights,
 }: {
-  date: string;
+  /** Der Kalendertag des Dashboards (heute für den Nutzer); neue Log-Einträge gehören zu diesem Tag. */
+  date: CalendarDate;
   targets: Targets;
   initialPlanItems: PlanItemView[];
   initialEntries: LogEntryView[];

@@ -1,7 +1,5 @@
-import { execSync } from "node:child_process";
-import { rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { pushSchema, removeIsolatedDatabase, seedFoodCatalog } from "@/test/isolatedDatabase";
 import { FoodCatalog } from "./catalog";
 import { buildRecipes, buildSeedCatalog, recipeIngredientRowData, recipeRowData } from "./data/build";
 import {
@@ -17,16 +15,13 @@ import type { CatalogFood } from "./types";
 /**
  * Integrationstests gegen eine ISOLIERTE, frisch angelegte SQLite-Datenbank im OS-Temp-Verzeichnis
  * (Schema per `prisma db push`, Foods/Rezepte aus den Seed-Daten). Die echte prisma/dev.db wird nie
- * geöffnet: `../db` ist auf diese Testdatenbank umgelenkt, und der Setup bricht ab, falls die URL
- * nicht im Temp-Verzeichnis liegt. Echte Transaktionen, Unique-Indizes und Foreign Keys - das ist
- * nötig, um Idempotenz, parallele Requests und Rollback belastbar zu prüfen.
+ * geöffnet: `../db` ist auf diese Testdatenbank umgelenkt, und der Setup (src/test/isolatedDatabase.ts)
+ * bricht ab, falls die URL nicht im Temp-Verzeichnis liegt. Echte Transaktionen, Unique-Indizes und
+ * Foreign Keys - das ist nötig, um Idempotenz, parallele Requests und Rollback belastbar zu prüfen.
  */
 const testDb = await vi.hoisted(async () => {
-  const { mkdtempSync } = await import("node:fs");
-  const { tmpdir } = await import("node:os");
-  const { join } = await import("node:path");
-  const dir = mkdtempSync(join(tmpdir(), "vyn-import-queue-"));
-  return { dir, url: `file:${join(dir, "test.db").replace(/\\/g, "/")}` };
+  const { createIsolatedDatabaseLocation } = await import("@/test/isolatedDatabase");
+  return createIsolatedDatabaseLocation("vyn-import-queue-");
 });
 
 vi.mock("../db", async () => {
@@ -42,28 +37,7 @@ const seedCatalog = buildSeedCatalog();
 const seedSlugs = buildRecipes(seedCatalog).map((r) => r.slug);
 
 async function seedTestCatalog() {
-  await prisma.ingredient.createMany({
-    data: seedCatalog.all().map((food) => ({
-      id: food.id,
-      name: food.name,
-      normalizedName: food.name.trim().toLowerCase(),
-      slug: food.slug,
-      category: food.category,
-      dietClass: food.dietClass,
-      aliases: JSON.stringify(food.aliases),
-      allergens: JSON.stringify(food.allergens),
-      negligible: food.negligible ?? false,
-      unitGrams: food.unitGrams ? JSON.stringify(food.unitGrams) : null,
-      kcalPer100: food.nutrition?.kcal ?? null,
-      proteinPer100G: food.nutrition?.proteinG ?? null,
-      carbsPer100G: food.nutrition?.carbsG ?? null,
-      fatPer100G: food.nutrition?.fatG ?? null,
-      fiberPer100G: food.nutrition?.fiberG ?? null,
-      sugarPer100G: food.nutrition?.sugarG ?? null,
-      saturatedFatPer100G: food.nutrition?.saturatedFatG ?? null,
-      sodiumPer100Mg: food.nutrition?.sodiumMg ?? null,
-    })),
-  });
+  await seedFoodCatalog(prisma);
   for (const recipe of buildRecipes(seedCatalog)) {
     await prisma.recipe.create({
       data: {
@@ -77,17 +51,13 @@ async function seedTestCatalog() {
 }
 
 beforeAll(async () => {
-  const tempRoot = tmpdir().replace(/\\/g, "/").toLowerCase();
-  if (!testDb.url.toLowerCase().startsWith(`file:${tempRoot}`)) {
-    throw new Error(`Testdatenbank liegt nicht im Temp-Verzeichnis: ${testDb.url}`);
-  }
-  execSync("npx prisma db push --skip-generate", { env: { ...process.env, DATABASE_URL: testDb.url }, stdio: "pipe" });
+  pushSchema(testDb);
   await seedTestCatalog();
 }, 120_000);
 
 afterAll(async () => {
   await prisma.$disconnect();
-  rmSync(testDb.dir, { recursive: true, force: true });
+  removeIsolatedDatabase(testDb);
 });
 
 beforeEach(async () => {

@@ -1,21 +1,10 @@
+import { addDays, type CalendarDate } from "../calendarDate";
 import { checkHouseholdHardConstraints } from "./hardConstraints";
 import type { GeneratedMeal, GeneratedMealPlan, PlannableMealSlot, PlanningContext } from "./types";
 
 export interface PlanValidationError {
   meal: GeneratedMeal;
   message: string;
-}
-
-function startOfDay(date: Date): Date {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function endOfDay(date: Date): Date {
-  const d = new Date(date);
-  d.setHours(23, 59, 59, 999);
-  return d;
 }
 
 /**
@@ -28,15 +17,14 @@ function endOfDay(date: Date): Date {
 export function validateGeneratedPlan(
   plan: GeneratedMealPlan,
   context: PlanningContext,
-  input: { startDate: Date; days: number; slots: PlannableMealSlot[] },
+  input: { startDate: CalendarDate; days: number; slots: PlannableMealSlot[] },
 ): PlanValidationError[] {
   const errors: PlanValidationError[] = [];
   const candidateById = new Map(context.candidates.map((c) => [c.id, c]));
 
-  const rangeStart = startOfDay(input.startDate);
-  const rangeEndDate = new Date(input.startDate);
-  rangeEndDate.setDate(rangeEndDate.getDate() + input.days - 1);
-  const rangeEnd = endOfDay(rangeEndDate);
+  // Kalendertage "JJJJ-MM-TT" lassen sich direkt als Text vergleichen.
+  const firstDay = input.startDate;
+  const lastDay = addDays(input.startDate, input.days - 1);
 
   if (context.members.length === 0) {
     errors.push({
@@ -54,7 +42,7 @@ export function validateGeneratedPlan(
     if (!Number.isFinite(meal.portionMultiplier) || meal.portionMultiplier <= 0) {
       errors.push({ meal, message: "Ungültige Portionsgröße." });
     }
-    if (meal.date.getTime() < rangeStart.getTime() || meal.date.getTime() > rangeEnd.getTime()) {
+    if (meal.date < firstDay || meal.date > lastDay) {
       errors.push({ meal, message: "Datum liegt außerhalb des Planungszeitraums." });
     }
     if (!input.slots.includes(meal.slot)) {

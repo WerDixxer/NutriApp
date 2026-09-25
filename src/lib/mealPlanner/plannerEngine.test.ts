@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
+import type { CalendarDate } from "../calendarDate";
 import { generateMealPlan } from "./plannerEngine";
 import type { MemberPlanningContext, PlanningContext } from "./types";
 import type { SearchableRecipe } from "../agents/recipeSearch";
 
 const now = new Date("2026-09-17T12:00:00");
+/** Der Kalendertag von `now` in Nutzerzeit: der Plan beginnt heute. */
+const TODAY: CalendarDate = "2026-09-17";
 
 function recipe(overrides: Partial<SearchableRecipe> = {}): SearchableRecipe {
   return {
@@ -62,13 +65,13 @@ function context(overrides: Partial<PlanningContext> = {}): PlanningContext {
 
 describe("generateMealPlan: Grundfälle", () => {
   it("plant einen einzelnen Tag mit den angeforderten Slots", () => {
-    const result = generateMealPlan(context(), { startDate: now, days: 1, slots: ["BREAKFAST", "LUNCH", "DINNER"] }, now);
+    const result = generateMealPlan(context(), { startDate: TODAY, days: 1, slots: ["BREAKFAST", "LUNCH", "DINNER"] }, now);
     expect(result.status).toBe("SUCCESS");
     expect(result.meals).toHaveLength(3);
   });
 
   it("plant sieben Tage mit jeweils allen Slots (21 Mahlzeiten)", () => {
-    const result = generateMealPlan(context(), { startDate: now, days: 7, slots: ["BREAKFAST", "LUNCH", "DINNER"] }, now);
+    const result = generateMealPlan(context(), { startDate: TODAY, days: 7, slots: ["BREAKFAST", "LUNCH", "DINNER"] }, now);
     expect(result.status).toBe("SUCCESS");
     expect(result.meals).toHaveLength(21);
   });
@@ -80,34 +83,34 @@ describe("generateMealPlan: Grundfälle", () => {
         recipe({ id: "snack-1", name: "Obst", mealSlots: ["SNACK"] }),
       ],
     });
-    const result = generateMealPlan(withSnack, { startDate: now, days: 1, slots: ["BREAKFAST", "LUNCH", "SNACK", "DINNER"] }, now);
+    const result = generateMealPlan(withSnack, { startDate: TODAY, days: 1, slots: ["BREAKFAST", "LUNCH", "SNACK", "DINNER"] }, now);
     expect(result.meals.some((m) => m.slot === "SNACK")).toBe(true);
   });
 });
 
 describe("generateMealPlan: leere/unzureichende Rezeptdatenbank", () => {
   it("liefert NO_VALID_PLAN bei einer leeren Rezeptdatenbank", () => {
-    const result = generateMealPlan(context({ candidates: [] }), { startDate: now, days: 1, slots: ["BREAKFAST"] }, now);
+    const result = generateMealPlan(context({ candidates: [] }), { startDate: TODAY, days: 1, slots: ["BREAKFAST"] }, now);
     expect(result.status).toBe("NO_VALID_PLAN");
     expect(result.meals).toEqual([]);
   });
 
   it("liefert NO_VALID_PLAN, wenn kein Rezept die Hard Constraints erfüllt", () => {
     const onlyUnsafe = context({ candidates: [recipe({ allergens: ["Nüsse"] })], members: [member({ allergies: ["Nüsse"] })] });
-    const result = generateMealPlan(onlyUnsafe, { startDate: now, days: 1, slots: ["BREAKFAST"] }, now);
+    const result = generateMealPlan(onlyUnsafe, { startDate: TODAY, days: 1, slots: ["BREAKFAST"] }, now);
     expect(result.status).toBe("NO_VALID_PLAN");
   });
 
   it("liefert PARTIAL, wenn ein Slot nicht besetzt werden kann, andere aber schon", () => {
     const partial = context({ candidates: [recipe({ id: "lunch-only", mealSlots: ["LUNCH"] })] });
-    const result = generateMealPlan(partial, { startDate: now, days: 1, slots: ["BREAKFAST", "LUNCH"] }, now);
+    const result = generateMealPlan(partial, { startDate: TODAY, days: 1, slots: ["BREAKFAST", "LUNCH"] }, now);
     expect(result.status).toBe("PARTIAL");
     expect(result.unmetSlots.some((u) => u.slot === "BREAKFAST")).toBe(true);
     expect(result.meals.some((m) => m.slot === "LUNCH")).toBe(true);
   });
 
   it("liefert NO_VALID_PLAN ohne jedes geplante Mitglied", () => {
-    const result = generateMealPlan(context({ members: [] }), { startDate: now, days: 1, slots: ["LUNCH"] }, now);
+    const result = generateMealPlan(context({ members: [] }), { startDate: TODAY, days: 1, slots: ["LUNCH"] }, now);
     expect(result.status).toBe("NO_VALID_PLAN");
   });
 });
@@ -115,7 +118,7 @@ describe("generateMealPlan: leere/unzureichende Rezeptdatenbank", () => {
 describe("generateMealPlan: Pantry leer vs. befüllt", () => {
   it("plant erfolgreich mit leerem Pantry (neutrale Bewertung, kein Fehler)", () => {
     const result = generateMealPlan(context({ pantry: { availableIngredientNames: [], urgentIngredientNames: [] } }), {
-      startDate: now,
+      startDate: TODAY,
       days: 1,
       slots: ["LUNCH"],
     }, now);
@@ -130,7 +133,7 @@ describe("generateMealPlan: Pantry leer vs. befüllt", () => {
       ],
       pantry: { availableIngredientNames: ["Hähnchenbrust"], urgentIngredientNames: ["Hähnchenbrust"] },
     });
-    const result = generateMealPlan(ctx, { startDate: now, days: 1, slots: ["LUNCH"] }, now);
+    const result = generateMealPlan(ctx, { startDate: TODAY, days: 1, slots: ["LUNCH"] }, now);
     expect(result.meals[0].recipeId).toBe("lunch-1");
   });
 });
@@ -138,12 +141,12 @@ describe("generateMealPlan: Pantry leer vs. befüllt", () => {
 describe("generateMealPlan: Budget verfügbar/nicht verfügbar", () => {
   it("plant unabhängig davon, ob ein Budget aktiv ist (Budget-Faktor bleibt neutral, kein Preismodell)", () => {
     const withBudget = generateMealPlan(context({ budget: { remainingWeekBudgetCents: 3000, remainingMonthBudgetCents: null } }), {
-      startDate: now,
+      startDate: TODAY,
       days: 1,
       slots: ["LUNCH"],
     }, now);
     const withoutBudget = generateMealPlan(context({ budget: { remainingWeekBudgetCents: null, remainingMonthBudgetCents: null } }), {
-      startDate: now,
+      startDate: TODAY,
       days: 1,
       slots: ["LUNCH"],
     }, now);
@@ -157,7 +160,7 @@ describe("generateMealPlan: mehrere Haushaltsmitglieder mit unterschiedlichen Zi
   it("plant für mehrere Mitglieder gemeinsam, ohne Fehler", () => {
     const vincenzo = member({ householdMemberId: "member-1", fullDailyTarget: { kcal: 2500, proteinG: 160, carbsG: 280, fatG: 75 }, remainingTodayTarget: { kcal: 2500, proteinG: 160, carbsG: 280, fatG: 75 } });
     const partner = member({ householdMemberId: "member-2", name: "Partner", fullDailyTarget: { kcal: 1900, proteinG: 120, carbsG: 200, fatG: 60 }, remainingTodayTarget: { kcal: 1900, proteinG: 120, carbsG: 200, fatG: 60 } });
-    const result = generateMealPlan(context({ members: [vincenzo, partner] }), { startDate: now, days: 1, slots: ["BREAKFAST", "LUNCH", "DINNER"] }, now);
+    const result = generateMealPlan(context({ members: [vincenzo, partner] }), { startDate: TODAY, days: 1, slots: ["BREAKFAST", "LUNCH", "DINNER"] }, now);
     expect(result.status).toBe("SUCCESS");
   });
 
@@ -168,7 +171,7 @@ describe("generateMealPlan: mehrere Haushaltsmitglieder mit unterschiedlichen Zi
       members: [vincenzo, allergicPartner],
       candidates: [recipe({ id: "chicken", allergens: ["Hähnchen"] })],
     });
-    const result = generateMealPlan(ctx, { startDate: now, days: 1, slots: ["LUNCH"] }, now);
+    const result = generateMealPlan(ctx, { startDate: TODAY, days: 1, slots: ["LUNCH"] }, now);
     expect(result.status).toBe("NO_VALID_PLAN");
   });
 });
@@ -176,7 +179,7 @@ describe("generateMealPlan: mehrere Haushaltsmitglieder mit unterschiedlichen Zi
 describe("generateMealPlan: Determinismus", () => {
   it("liefert bei identischer Eingabe immer dasselbe Ergebnis", () => {
     const ctx = context();
-    const input = { startDate: now, days: 7, slots: ["BREAKFAST", "LUNCH", "DINNER"] as const };
+    const input = { startDate: TODAY, days: 7, slots: ["BREAKFAST", "LUNCH", "DINNER"] as const };
     const a = generateMealPlan(ctx, { ...input, slots: [...input.slots] }, now);
     const b = generateMealPlan(ctx, { ...input, slots: [...input.slots] }, now);
     expect(a.meals.map((m) => m.recipeId)).toEqual(b.meals.map((m) => m.recipeId));
@@ -191,7 +194,7 @@ describe("generateMealPlan: Determinismus", () => {
         recipe({ id: "aaa-recipe", mealSlots: ["LUNCH"] }),
       ],
     });
-    const result = generateMealPlan(tie, { startDate: now, days: 1, slots: ["LUNCH"] }, now);
+    const result = generateMealPlan(tie, { startDate: TODAY, days: 1, slots: ["LUNCH"] }, now);
     expect(result.meals[0].recipeId).toBe("aaa-recipe");
   });
 });
@@ -199,7 +202,7 @@ describe("generateMealPlan: Determinismus", () => {
 describe("generateMealPlan: Reasons sind nur tatsächlich berechnete Gründe", () => {
   it("jede genannte Begründung stammt aus einem tatsächlich positiven Scoring-Faktor", () => {
     const ctx = context({ pantry: { availableIngredientNames: ["Hähnchenbrust"], urgentIngredientNames: [] } });
-    const result = generateMealPlan(ctx, { startDate: now, days: 1, slots: ["LUNCH"] }, now);
+    const result = generateMealPlan(ctx, { startDate: TODAY, days: 1, slots: ["LUNCH"] }, now);
     const meal = result.meals[0];
     // Keine Begründung darf leer oder generisch-erfunden sein.
     for (const reason of meal.reasons) {

@@ -10,6 +10,7 @@ import { getDecisionEngine } from "./decisionEngine";
 import { getMacroRescueEngine } from "./macroRescueEngine";
 import { transformRecipe } from "./recipeTransformer";
 import { getOrGenerateDayPlan } from "../generateMealPlan";
+import { todayForUser } from "../calendarDate";
 import { attachStructuredIngredients, loadFoodCatalog } from "../recipes/recipeService";
 
 /**
@@ -238,9 +239,7 @@ async function runTransformRecipeTask(profileId: string, query: AssistantQuery):
 }
 
 async function runBuildMealPlanTask(profileId: string): Promise<TaskResult> {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const plan = await getOrGenerateDayPlan(profileId, today);
+  const plan = await getOrGenerateDayPlan(profileId, todayForUser());
 
   if (plan.items.length === 0) {
     return {

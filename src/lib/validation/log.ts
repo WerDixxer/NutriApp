@@ -1,8 +1,10 @@
 import { z } from "zod";
+import { calendarDateSchema } from "./calendarDate";
 import { mealSlotSchema } from "./recipes";
 
 export const logPayloadSchema = z.object({
-  date: z.string().min(1),
+  /** Kalendertag des Eintrags ("JJJJ-MM-TT"), kein Zeitpunkt. */
+  date: calendarDateSchema,
   slot: mealSlotSchema,
   recipeId: z.string().min(1).optional(),
   customName: z.string().trim().max(120).optional(),

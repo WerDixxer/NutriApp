@@ -1,3 +1,4 @@
+import { addDays, startOfWeek, todayForUser, toDbDate, type CalendarDate } from "../calendarDate";
 import { prisma } from "../db";
 import { getHouseholdIdForProfile } from "../household";
 import { getHouseholdRotation } from "../rotation/rotationService";
@@ -9,27 +10,18 @@ import type { RotationUrgency } from "../rotation/types";
 import { calculateWeeklyShopping, type WeeklyShoppingCalculation } from "./weeklyShopping";
 
 export interface WeeklyShoppingResult extends WeeklyShoppingCalculation {
-  /** Montag 00:00 (lokal) der berechneten Woche. */
-  weekStart: Date;
-  /** Sonntag 00:00 (lokal) der berechneten Woche. */
-  weekEnd: Date;
+  /** Montag der berechneten Woche (Kalendertag des Nutzers). */
+  weekStart: CalendarDate;
+  /** Sonntag der berechneten Woche. */
+  weekEnd: CalendarDate;
   /** Für wie viele der 7 Tage bereits ein Plan existiert (Rest fließt NICHT ein, siehe getWeeklyShoppingForProfile). */
   plannedDays: number;
 }
 
-function startOfDay(date: Date): Date {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-/** Woche Montag bis Sonntag, wie sie auch /plan darstellt. */
-export function weekRangeFor(date: Date): { start: Date; end: Date } {
-  const start = startOfDay(date);
-  start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
-  const end = new Date(start);
-  end.setDate(start.getDate() + 6);
-  return { start, end };
+/** Woche Montag bis Sonntag, in der der Kalendertag `day` liegt - wie sie auch /plan darstellt. */
+export function weekRangeFor(day: CalendarDate): { start: CalendarDate; end: CalendarDate } {
+  const start = startOfWeek(day);
+  return { start, end: addDays(start, 6) };
 }
 
 /**
@@ -48,14 +40,15 @@ export function weekRangeFor(date: Date): { start: Date; end: Date } {
  */
 export async function getWeeklyShoppingForProfile(
   profileId: string,
-  date: Date = new Date(),
+  /** Ein Kalendertag der gewünschten Woche; ohne Angabe die Woche von heute (Nutzerzeit). */
+  day?: CalendarDate,
   now: Date = new Date(),
 ): Promise<WeeklyShoppingResult> {
-  const { start, end } = weekRangeFor(date);
+  const { start, end } = weekRangeFor(day ?? todayForUser(now));
 
   const [days, householdId] = await Promise.all([
     prisma.mealPlanDay.findMany({
-      where: { profileId, date: { gte: start, lte: end } },
+      where: { profileId, date: { gte: toDbDate(start), lte: toDbDate(end) } },
       include: { items: { include: { recipe: true } } },
       orderBy: { date: "asc" },
     }),

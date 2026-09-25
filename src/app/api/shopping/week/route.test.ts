@@ -54,13 +54,13 @@ describe("GET /api/shopping/week", () => {
     expect(getWeeklyShoppingForProfile).toHaveBeenCalledWith("profile-1", undefined);
   });
 
-  it("reicht ein gültiges Datum als lokales Datum weiter und liefert 200 mit dem Ergebnis", async () => {
+  it("reicht ein gültiges Datum als Kalendertag weiter und liefert 200 mit dem Ergebnis", async () => {
     getWeeklyShoppingForProfile.mockResolvedValueOnce({ plannedDays: 5, items: [], unresolvedIngredients: [] });
     const res = await GET(new Request("http://x?date=2026-09-23"));
     const body = await res.json();
 
     expect(res.status).toBe(200);
     expect(body.shopping.plannedDays).toBe(5);
-    expect(getWeeklyShoppingForProfile).toHaveBeenCalledWith("profile-1", new Date(2026, 8, 23));
+    expect(getWeeklyShoppingForProfile).toHaveBeenCalledWith("profile-1", "2026-09-23");
   });
 });

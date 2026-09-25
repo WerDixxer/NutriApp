@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { formatCalendarDate, fromDbDate, todayForUser, weekdayIndex } from "@/lib/calendarDate";
 import { SLOT_LABELS, WEEKDAY_LABELS } from "@/lib/labels";
 import { Button } from "@/components/ui/Button";
 import { Pill } from "@/components/ui/Pill";
@@ -53,14 +54,13 @@ function dateKey(iso: string): string {
   return iso.slice(0, 10);
 }
 
+/** Plan- und Mahlzeit-Daten sind Kalendertage (in der API als UTC-Mitternacht), nie in Browserzeit umrechnen. */
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
+  return formatCalendarDate(fromDbDate(new Date(iso)), { day: "2-digit", month: "2-digit" });
 }
 
 function weekdayLabel(iso: string): string {
-  const jsDay = new Date(iso).getDay(); // 0=So
-  const mondayFirst = (jsDay + 6) % 7;
-  return WEEKDAY_LABELS[mondayFirst];
+  return WEEKDAY_LABELS[weekdayIndex(fromDbDate(new Date(iso)))];
 }
 
 interface RawApiPlan {
@@ -245,7 +245,7 @@ export default function MealPlansClient({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          startDate: new Date().toISOString().slice(0, 10),
+          startDate: todayForUser(),
           days: input.days,
           mealTypes,
           memberIds: input.memberIds.length < memberOptions.length ? input.memberIds : undefined,

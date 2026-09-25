@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { toDbDate, type CalendarDate } from "../calendarDate";
 
 const mealPlanDayFindMany = vi.fn();
 const pantryItemFindMany = vi.fn();
@@ -27,10 +28,10 @@ vi.mock("../rotation/rotationService", () => ({
 
 const { getWeeklyShoppingForProfile, weekRangeFor } = await import("./weeklyShoppingService");
 
-function day(date: Date, items: { id: string; recipeName: string; ingredients: string[]; portionMultiplier?: number }[]) {
+function day(date: CalendarDate, items: { id: string; recipeName: string; ingredients: string[]; portionMultiplier?: number }[]) {
   return {
-    id: `day-${date.getDate()}`,
-    date,
+    id: `day-${date}`,
+    date: toDbDate(date),
     items: items.map((item) => ({
       id: item.id,
       slot: "LUNCH",
@@ -51,46 +52,46 @@ beforeEach(() => {
 
 describe("weekRangeFor", () => {
   it("liefert Montag bis Sonntag der Woche, die das Datum enthält", () => {
-    const { start, end } = weekRangeFor(new Date(2026, 8, 23, 15, 30)); // Mittwoch
-    expect(start).toEqual(new Date(2026, 8, 21));
-    expect(end).toEqual(new Date(2026, 8, 27));
+    const { start, end } = weekRangeFor("2026-09-23"); // Mittwoch
+    expect(start).toEqual("2026-09-21");
+    expect(end).toEqual("2026-09-27");
   });
 
   it("ordnet Montag und Sonntag derselben Woche zu", () => {
-    expect(weekRangeFor(new Date(2026, 8, 21)).start).toEqual(new Date(2026, 8, 21));
-    expect(weekRangeFor(new Date(2026, 8, 27)).start).toEqual(new Date(2026, 8, 21));
+    expect(weekRangeFor("2026-09-21").start).toEqual("2026-09-21");
+    expect(weekRangeFor("2026-09-27").start).toEqual("2026-09-21");
   });
 
   it("überspringt Monatsgrenzen korrekt", () => {
-    const { start, end } = weekRangeFor(new Date(2026, 9, 1)); // Donnerstag, 1. Oktober
-    expect(start).toEqual(new Date(2026, 8, 28));
-    expect(end).toEqual(new Date(2026, 9, 4));
+    const { start, end } = weekRangeFor("2026-10-01"); // Donnerstag, 1. Oktober
+    expect(start).toEqual("2026-09-28");
+    expect(end).toEqual("2026-10-04");
   });
 });
 
 describe("getWeeklyShoppingForProfile: Planquelle", () => {
   it("liest die MealPlanDay-Zeilen des Profils für genau diese Woche und erzeugt keine", async () => {
-    await getWeeklyShoppingForProfile("profile-1", new Date(2026, 8, 23));
+    await getWeeklyShoppingForProfile("profile-1", "2026-09-23");
 
     expect(mealPlanDayFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { profileId: "profile-1", date: { gte: new Date(2026, 8, 21), lte: new Date(2026, 8, 27) } } }),
+      expect.objectContaining({ where: { profileId: "profile-1", date: { gte: toDbDate("2026-09-21"), lte: toDbDate("2026-09-27") } } }),
     );
   });
 
   it("aggregiert über alle Tage der Woche und zieht den Haushalts-Vorrat danach einmal ab", async () => {
     mealPlanDayFindMany.mockResolvedValue([
-      day(new Date(2026, 8, 21), [{ id: "i1", recipeName: "Montag", ingredients: ["4 Stück Tomaten"] }]),
-      day(new Date(2026, 8, 23), [{ id: "i2", recipeName: "Mittwoch", ingredients: ["2 Stück Tomaten"] }]),
-      day(new Date(2026, 8, 25), [{ id: "i3", recipeName: "Freitag", ingredients: ["2 Stück Tomaten", "1 EL Öl"] }]),
+      day("2026-09-21", [{ id: "i1", recipeName: "Montag", ingredients: ["4 Stück Tomaten"] }]),
+      day("2026-09-23", [{ id: "i2", recipeName: "Mittwoch", ingredients: ["2 Stück Tomaten"] }]),
+      day("2026-09-25", [{ id: "i3", recipeName: "Freitag", ingredients: ["2 Stück Tomaten", "1 EL Öl"] }]),
     ]);
     pantryItemFindMany.mockResolvedValue([{ id: "p1", name: "Tomaten", remainingQuantity: 3, unit: "PIECE" }]);
     getHouseholdRotation.mockResolvedValue({ results: [{ pantryItemId: "p1", urgency: "HIGH" }], useFirst: [], planMeal: [] });
 
-    const result = await getWeeklyShoppingForProfile("profile-1", new Date(2026, 8, 23));
+    const result = await getWeeklyShoppingForProfile("profile-1", "2026-09-23");
 
     expect(pantryItemFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { householdId: "household-1" } }));
-    expect(result.weekStart).toEqual(new Date(2026, 8, 21));
-    expect(result.weekEnd).toEqual(new Date(2026, 8, 27));
+    expect(result.weekStart).toEqual("2026-09-21");
+    expect(result.weekEnd).toEqual("2026-09-27");
     expect(result.plannedDays).toBe(3);
     expect(result.items).toHaveLength(1);
     expect(result.items[0]).toMatchObject({
@@ -106,23 +107,23 @@ describe("getWeeklyShoppingForProfile: Planquelle", () => {
 
   it("wendet den Portionsfaktor des Plan-Eintrags an", async () => {
     mealPlanDayFindMany.mockResolvedValue([
-      day(new Date(2026, 8, 21), [{ id: "i1", recipeName: "Bowl", ingredients: ["200 g Reis"], portionMultiplier: 1.5 }]),
+      day("2026-09-21", [{ id: "i1", recipeName: "Bowl", ingredients: ["200 g Reis"], portionMultiplier: 1.5 }]),
     ]);
-    const result = await getWeeklyShoppingForProfile("profile-1", new Date(2026, 8, 21));
+    const result = await getWeeklyShoppingForProfile("profile-1", "2026-09-21");
     expect(result.items[0].requiredQuantity).toBe(300);
   });
 
   it("zählt Tage ohne Plan-Einträge nicht als geplant", async () => {
     mealPlanDayFindMany.mockResolvedValue([
-      day(new Date(2026, 8, 21), [{ id: "i1", recipeName: "Bowl", ingredients: ["200 g Reis"] }]),
-      day(new Date(2026, 8, 22), []),
+      day("2026-09-21", [{ id: "i1", recipeName: "Bowl", ingredients: ["200 g Reis"] }]),
+      day("2026-09-22", []),
     ]);
-    const result = await getWeeklyShoppingForProfile("profile-1", new Date(2026, 8, 21));
+    const result = await getWeeklyShoppingForProfile("profile-1", "2026-09-21");
     expect(result.plannedDays).toBe(1);
   });
 
   it("liefert für eine Woche ohne Plan ein leeres Ergebnis", async () => {
-    const result = await getWeeklyShoppingForProfile("profile-1", new Date(2026, 8, 21));
+    const result = await getWeeklyShoppingForProfile("profile-1", "2026-09-21");
     expect(result).toMatchObject({ plannedDays: 0, items: [], unresolvedIngredients: [] });
   });
 });
@@ -131,10 +132,10 @@ describe("getWeeklyShoppingForProfile: Vorrat", () => {
   it("behandelt den Vorrat ohne Haushalt als leer und fragt ihn gar nicht ab", async () => {
     getHouseholdIdForProfile.mockResolvedValue(null);
     mealPlanDayFindMany.mockResolvedValue([
-      day(new Date(2026, 8, 21), [{ id: "i1", recipeName: "Bowl", ingredients: ["200 g Reis"] }]),
+      day("2026-09-21", [{ id: "i1", recipeName: "Bowl", ingredients: ["200 g Reis"] }]),
     ]);
 
-    const result = await getWeeklyShoppingForProfile("profile-1", new Date(2026, 8, 21));
+    const result = await getWeeklyShoppingForProfile("profile-1", "2026-09-21");
 
     expect(pantryItemFindMany).not.toHaveBeenCalled();
     expect(getHouseholdRotation).not.toHaveBeenCalled();

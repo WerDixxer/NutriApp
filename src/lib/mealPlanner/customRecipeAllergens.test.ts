@@ -21,8 +21,9 @@ const { buildPlanningContext } = await import("./planningContext");
 const { generateMealPlan } = await import("./plannerEngine");
 const { getOrGenerateDayPlan } = await import("@/lib/generateMealPlan");
 
-const NOW = new Date(2026, 8, 24, 9, 0, 0);
-const TODAY = new Date(2026, 8, 24);
+const NOW = new Date("2026-09-24T09:00:00+02:00");
+/** Der Kalendertag von NOW in Nutzerzeit. */
+const TODAY = "2026-09-24";
 const ALL_DIETS = JSON.stringify(["OMNIVORE", "PESCETARIAN", "VEGETARIAN"]);
 
 beforeAll(async () => {

@@ -1,3 +1,4 @@
+import { addDays, todayForUser, toDbDate } from "../calendarDate";
 import { prisma } from "../db";
 import { calcFullTargets } from "../nutrition";
 import { getPantryContextForHousehold } from "../rotation/rotationService";
@@ -7,12 +8,6 @@ import { VARIETY_WINDOW_DAYS } from "../agents/decision/softScoring";
 import { createFoodPreferenceContext } from "../recipes/foodPreferences";
 import { attachStructuredIngredients, loadFoodCatalog } from "../recipes/recipeService";
 import type { PlanningContext, MemberPlanningContext } from "./types";
-
-function startOfDay(date: Date): Date {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
 
 /**
  * Lädt ALLES, was der Planner braucht, in wenigen, gezielten Queries (keine
@@ -47,9 +42,9 @@ export async function buildPlanningContext(
   });
   const profileByUserId = new Map(profiles.map((p) => [p.userId, p]));
 
-  const today = startOfDay(now);
+  const today = todayForUser(now);
   const logEntries = await prisma.logEntry.findMany({
-    where: { profileId: { in: profiles.map((p) => p.id) }, date: today },
+    where: { profileId: { in: profiles.map((p) => p.id) }, date: toDbDate(today) },
   });
   const consumedByProfileId = new Map<string, { kcal: number; proteinG: number; carbsG: number; fatG: number }>();
   for (const entry of logEntries) {
@@ -115,10 +110,9 @@ export async function buildPlanningContext(
     catalog,
   );
 
-  const varietySince = new Date(today);
-  varietySince.setDate(varietySince.getDate() - VARIETY_WINDOW_DAYS);
+  const varietySince = addDays(today, -VARIETY_WINDOW_DAYS);
   const recentLogs = await prisma.logEntry.findMany({
-    where: { profileId: { in: members.map((m) => m.profileId) }, date: { gte: varietySince }, recipeId: { not: null } },
+    where: { profileId: { in: members.map((m) => m.profileId) }, date: { gte: toDbDate(varietySince) }, recipeId: { not: null } },
     select: { recipeId: true },
   });
   const recentRecipeCounts = new Map<string, number>();

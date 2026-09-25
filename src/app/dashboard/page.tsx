@@ -11,14 +11,9 @@ import { analyzeRecipesForProfile, toPersonalizationInput } from "@/lib/recipes/
 import { getInsightsForProfile } from "@/lib/insights/insightService";
 import { forSurface } from "@/lib/insights/dedupe";
 import type { InsightView } from "@/components/insights/InsightsPanel";
+import { formatCalendarDate, todayForUser, toDbDate } from "@/lib/calendarDate";
 
 const DASHBOARD_INSIGHT_LIMIT = 3;
-
-function startOfDay(date: Date): Date {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
 
 export default async function DashboardPage() {
   const profile = await requireProfile();
@@ -34,10 +29,11 @@ export default async function DashboardPage() {
     sportType: profile.sportType,
   });
 
-  const today = startOfDay(new Date());
+  const now = new Date();
+  const today = todayForUser(now);
   const plan = await getOrGenerateDayPlan(profile.id, today);
   const entries = await prisma.logEntry.findMany({
-    where: { profileId: profile.id, date: today },
+    where: { profileId: profile.id, date: toDbDate(today) },
     orderBy: { createdAt: "asc" },
   });
 
@@ -69,10 +65,10 @@ export default async function DashboardPage() {
     fatG: e.fatG,
   }));
 
-  const todayLabel = today.toLocaleDateString("de-DE", { weekday: "long", day: "2-digit", month: "long" });
+  const todayLabel = formatCalendarDate(today, { weekday: "long", day: "2-digit", month: "long" });
   const trainingToday = profile.sportType !== "NONE";
 
-  const allInsights = await getInsightsForProfile(profile.id, today);
+  const allInsights = await getInsightsForProfile(profile.id, now);
   const insights: InsightView[] = forSurface(allInsights, "DASHBOARD")
     .slice(0, DASHBOARD_INSIGHT_LIMIT)
     .map((i) => ({ id: i.id, message: i.message, priority: i.priority, action: i.action }));
@@ -110,7 +106,7 @@ export default async function DashboardPage() {
       </div>
 
       <DashboardClient
-        date={today.toISOString()}
+        date={today}
         targets={targets}
         initialPlanItems={planItems}
         initialEntries={entryViews}
