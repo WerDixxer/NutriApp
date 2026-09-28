@@ -1,5 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { auth } from "./auth";
+import { parseInternalReviewEmails } from "./config/env";
 import { prisma } from "./db";
 
 /** Für Server Components/Pages: gibt die eingeloggte User-ID zurück oder leitet zu /login um. */
@@ -79,28 +80,21 @@ export async function requireHouseholdId(): Promise<string> {
 /**
  * Zugriff auf interne Entwickler-/Review-Werkzeuge (Kapitel 19, z.B. `/internal/recipe-review`).
  * Es gibt bewusst noch keine Rollen-/Permission-Engine (siehe Kapitel-Auftrag Abschnitt 6: keine
- * neue Rollenarchitektur bauen). Zugriff braucht eine eingeloggte Session UND eine der beiden:
- *  - die E-Mail steht in der kommagetrennten Env-Variable `INTERNAL_REVIEW_EMAILS`, ODER
- *  - die Variable ist nicht gesetzt UND es ist keine Produktionsumgebung (`NODE_ENV !==
- *    "production"`) - dann darf lokal/in Preview-Umgebungen jeder eingeloggte Nutzer zugreifen,
- *    damit interne Tools ohne Konfigurationsaufwand nutzbar sind.
- * In Produktion ohne gesetzte Variable ist der Zugriff für niemanden möglich (sicher
- * geschlossen). Nicht eingeloggt -> `/login`; eingeloggt, aber nicht zugelassen -> `notFound()`
- * (404 statt 403), damit die Route für Unbefugte nicht als "existiert, aber verboten" erkennbar
- * wird.
+ * neue Rollenarchitektur bauen). Zugriff braucht eine eingeloggte Session UND eine E-Mail aus der
+ * kommagetrennten Env-Variable `INTERNAL_REVIEW_EMAILS` - in JEDER Umgebung (F-07). Ohne Allowlist
+ * ist der Zugang geschlossen, auch in der Entwicklung: `NODE_ENV` sagt nichts darüber, ob ein
+ * Dev-Server z.B. per Tunnel öffentlich erreichbar ist. Lokal trägt man die eigene E-Mail ein.
+ * Nicht eingeloggt -> `/login`; eingeloggt, aber nicht zugelassen -> `notFound()` (404 statt 403),
+ * damit die Route für Unbefugte nicht als "existiert, aber verboten" erkennbar wird.
  */
 export async function requireInternalReviewAccess(): Promise<{ userId: string; email: string | null }> {
   const session = await auth();
   const userId = session?.user?.id;
   if (!userId) redirect("/login");
 
-  const allowlist = (process.env.INTERNAL_REVIEW_EMAILS ?? "")
-    .split(",")
-    .map((entry) => entry.trim().toLowerCase())
-    .filter(Boolean);
+  const { emails: allowlist } = parseInternalReviewEmails(process.env.INTERNAL_REVIEW_EMAILS);
   const email = session.user.email ?? null;
-  const allowed = allowlist.length > 0 ? email !== null && allowlist.includes(email.toLowerCase()) : process.env.NODE_ENV !== "production";
-  if (!allowed) notFound();
+  if (email === null || !allowlist.includes(email.toLowerCase())) notFound();
 
   return { userId, email };
 }

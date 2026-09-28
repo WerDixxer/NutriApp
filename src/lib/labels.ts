@@ -189,6 +189,7 @@ export const IMPORT_ERROR_MESSAGES: Record<string, string> = {
   ALREADY_IN_CATALOG: "Zu dieser Quelle existiert bereits ein Katalog-Rezept. Es wurde kein zweites erstellt.",
   PUBLISH_BLOCKED: "Publish blockiert: Die erneute Prüfung trägt die Freigabe nicht mehr (siehe Verlauf). Es wurde kein Rezept erstellt.",
   PUBLISH_FAILED: "Publish fehlgeschlagen und vollständig zurückgerollt. Es wurde kein Rezept erstellt.",
+  MOCK_SOURCE_DISABLED: "Mock-Rezepte sind in Produktion gesperrt: Sie lassen sich weder importieren noch veröffentlichen. Es wurde nichts geändert.",
 };
 
 /** Anzeigenamen für den Import-Pipeline-Status (Kapitel 20). "approved"/"rejected" kommen nie aus der Pipeline selbst. */

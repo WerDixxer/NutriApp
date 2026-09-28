@@ -93,8 +93,38 @@ describe("Autorisierung jeder mutierenden Action", () => {
   });
 });
 
+describe("Autorisierung ohne Allowlist (F-07)", () => {
+  it.each(mutatingActions)("%s: außerhalb von Produktion ohne Allowlist -> 404, keine Mutation", async (_name, run) => {
+    authMock.mockResolvedValue(REVIEWER_SESSION);
+    await expect(run()).rejects.toThrow("NOT_FOUND");
+    expectNoServiceCall();
+  });
+});
+
+describe("Mock-Import (F-15)", () => {
+  beforeEach(() => {
+    process.env.INTERNAL_REVIEW_EMAILS = "reviewer@example.com";
+    authMock.mockResolvedValue(REVIEWER_SESSION);
+  });
+
+  it("wird in Produktion serverseitig abgewiesen, bevor irgendetwas geladen oder angelegt wird", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    await expect(actions.enqueueMockFixturesAction()).rejects.toThrow("REDIRECT:/internal/recipe-review?importError=MOCK_SOURCE_DISABLED");
+    expectNoServiceCall();
+  });
+
+  it.each(["development", "test"])("funktioniert außerhalb von Produktion (%s) weiter", async (nodeEnv) => {
+    vi.stubEnv("NODE_ENV", nodeEnv);
+    await expect(actions.enqueueMockFixturesAction()).rejects.toThrow("REDIRECT:/internal/recipe-review?imported=5&skipped=0");
+    expect(service.enqueueImportedRecipe).toHaveBeenCalledTimes(5);
+  });
+});
+
 describe("Eingaben und Actor", () => {
-  beforeEach(() => authMock.mockResolvedValue(REVIEWER_SESSION));
+  beforeEach(() => {
+    process.env.INTERNAL_REVIEW_EMAILS = "reviewer@example.com";
+    authMock.mockResolvedValue(REVIEWER_SESSION);
+  });
 
   it("nimmt die Actor-ID aus der Session, ein eingeschleustes Formularfeld wird ignoriert", async () => {
     await expect(

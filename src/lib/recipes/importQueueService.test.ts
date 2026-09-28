@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { pushSchema, removeIsolatedDatabase, seedFoodCatalog } from "@/test/isolatedDatabase";
 import { FoodCatalog } from "./catalog";
 import { buildRecipes, buildSeedCatalog, recipeIngredientRowData, recipeRowData } from "./data/build";
@@ -592,6 +592,62 @@ describe("publishCandidate", () => {
     context = await service.loadImportReviewContext();
     const review = service.reviewStoredCandidate((await service.getImportCandidateDetail(id))!.stored, context);
     expect(review.evaluation.duplicates.exactDuplicates).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Mock-Quellen in Produktion (F-15)
+// ---------------------------------------------------------------------------
+
+describe("Mock-Quellen in Produktion", () => {
+  const REAL_SOURCE_RECIPE: RawImportedRecipe = {
+    ...IMPORT_FIXTURE_RESOLVABLE,
+    source: { type: "external_api", label: "Rezept-API", externalId: "api-protein-pancakes" },
+  };
+
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("Import: eine Mock-Quelle wird abgewiesen, es entsteht kein Kandidat", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const context = await service.loadImportReviewContext();
+    expect(await service.enqueueImportedRecipe(IMPORT_FIXTURE_RESOLVABLE, context.catalog, reviewer)).toEqual({ ok: false, error: "MOCK_SOURCE_DISABLED" });
+    expect(await prisma.recipeImportCandidate.count()).toBe(0);
+    expect(await prisma.recipeImportEvent.count()).toBe(0);
+  });
+
+  it("Publish: ein freigegebener Mock-Kandidat wird nicht veröffentlicht, nichts wird geschrieben", async () => {
+    const id = await approvedCandidate(); // freigegeben außerhalb von Produktion, z.B. vor dem Deployment
+    const before = await candidateRow(id);
+    const eventsBefore = await eventActions(id);
+
+    vi.stubEnv("NODE_ENV", "production");
+    const context = await service.loadImportReviewContext();
+    expect(await service.publishCandidate(id, reviewer, context)).toEqual({ ok: false, error: "MOCK_SOURCE_DISABLED" });
+
+    expect(await externalRecipeCount()).toBe(0);
+    const after = await candidateRow(id);
+    expect(after.status).toBe("approved");
+    expect(after.publishedRecipeId).toBeNull();
+    expect(after.updatedAt).toEqual(before.updatedAt);
+    expect(await eventActions(id)).toEqual(eventsBefore);
+  });
+
+  it("Publish: ein Kandidat aus einer echten Quelle wird in Produktion normal veröffentlicht", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const id = await approvedCandidate(REAL_SOURCE_RECIPE);
+    const context = await service.loadImportReviewContext();
+    const result = await service.publishCandidate(id, reviewer, context);
+
+    expect(result.ok).toBe(true);
+    expect(await externalRecipeCount()).toBe(1);
+    expect((await candidateRow(id)).status).toBe("published");
+  });
+
+  it("außerhalb von Produktion bleibt das Mock-Verhalten unverändert (Import und Publish)", async () => {
+    const id = await approvedCandidate();
+    const context = await service.loadImportReviewContext();
+    expect((await service.publishCandidate(id, reviewer, context)).ok).toBe(true);
+    expect(await externalRecipeCount()).toBe(1);
   });
 });
 

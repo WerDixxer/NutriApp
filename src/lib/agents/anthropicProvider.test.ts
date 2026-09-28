@@ -22,7 +22,7 @@ vi.mock("@anthropic-ai/sdk", () => {
 });
 
 const { AnthropicProvider, LLM_MAX_RETRIES, LLM_REQUEST_TIMEOUT_MS } = await import("./anthropicProvider");
-const { LLMTimeoutError } = await import("./llmProvider");
+const { LLMConfigError, LLMTimeoutError } = await import("./llmProvider");
 const Anthropic = (await import("@anthropic-ai/sdk")).default as unknown as { APIConnectionTimeoutError: new (message?: string) => Error };
 
 const params = { system: "Test", messages: [{ role: "user" as const, content: "Hallo" }] };
@@ -65,6 +65,27 @@ describe("AnthropicProvider", () => {
 
     expect(error).toBeInstanceOf(LLMTimeoutError);
     expect((error as Error).message).not.toMatch(/anthropic|claude/i);
+  });
+
+  it("ein nicht unterstütztes LLM_MODEL ist ein Konfigurationsfehler (-> 503), ohne SDK-Aufruf (F-21)", async () => {
+    vi.stubEnv("LLM_MODEL", "claude-sonet-5");
+    try {
+      await expect(new AnthropicProvider().chat(params)).rejects.toBeInstanceOf(LLMConfigError);
+      expect(sdk.create).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("nutzt ohne LLM_MODEL das Standardmodell", async () => {
+    vi.stubEnv("LLM_MODEL", "");
+    try {
+      sdk.create.mockResolvedValueOnce({ content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" });
+      await new AnthropicProvider().chat(params);
+      expect(sdk.create).toHaveBeenCalledWith(expect.objectContaining({ model: "claude-sonnet-5" }));
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("reicht andere Fehler unverändert weiter", async () => {

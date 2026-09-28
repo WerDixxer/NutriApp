@@ -1,4 +1,5 @@
 import type { Prisma, RecipeImportCandidate as ImportCandidateRow } from "@prisma/client";
+import { mockRecipeSourcesAllowed } from "../config/env";
 import { prisma } from "../db";
 import { isUniqueConstraintError } from "../prismaErrors";
 import type { FoodCatalog } from "./catalog";
@@ -197,7 +198,15 @@ function cleanNote(note: string | null | undefined): string | null {
 // Import in die Queue
 // ---------------------------------------------------------------------------
 
-export type EnqueueResult = { ok: true; candidateId: string } | { ok: false; error: "DUPLICATE_SOURCE"; existingCandidateId: string | null };
+export type EnqueueResult =
+  | { ok: true; candidateId: string }
+  | { ok: false; error: "DUPLICATE_SOURCE"; existingCandidateId: string | null }
+  | { ok: false; error: "MOCK_SOURCE_DISABLED" };
+
+/** Mock-Fixtures sind Entwicklungsdaten: in Produktion weder in die Queue noch in den Katalog. */
+function isDisabledMockSource(sourceType: ImportSourceType): boolean {
+  return sourceType === "mock" && !mockRecipeSourcesAllowed();
+}
 
 async function findCandidateBySourceId(candidate: ImportedRecipeCandidate): Promise<{ id: string } | null> {
   const externalId = candidate.source.externalId;
@@ -212,9 +221,10 @@ async function findCandidateBySourceId(candidate: ImportedRecipeCandidate): Prom
  * Normalisiert einen Rohimport (Kapitel 20) und legt ihn als `pending_review` an. Auch
  * unvollständige Kandidaten werden gespeichert; ob sie freigabefähig sind, zeigt die Bewertung.
  * Dieselbe Quellen-ID wird nie ein zweites Mal angelegt - auch nicht bei parallelen Aufrufen
- * (Unique-Index, siehe schema.prisma).
+ * (Unique-Index, siehe schema.prisma). Mock-Quellen werden in Produktion abgewiesen (F-15).
  */
 export async function enqueueImportedRecipe(raw: RawImportedRecipe, catalog: FoodCatalog, actor: ReviewActor | null): Promise<EnqueueResult> {
+  if (isDisabledMockSource(raw.source.type)) return { ok: false, error: "MOCK_SOURCE_DISABLED" };
   const candidate = normalizeImportedRecipe(raw, catalog);
   const existing = await findCandidateBySourceId(candidate);
   if (existing) return { ok: false, error: "DUPLICATE_SOURCE", existingCandidateId: existing.id };
@@ -391,7 +401,8 @@ export type WorkflowErrorCode =
   | "ALREADY_PUBLISHED"
   | "ALREADY_IN_CATALOG"
   | "PUBLISH_BLOCKED"
-  | "PUBLISH_FAILED";
+  | "PUBLISH_FAILED"
+  | "MOCK_SOURCE_DISABLED";
 
 export type WorkflowResult =
   | { ok: true; recipeId?: string }
@@ -679,12 +690,14 @@ async function handlePublishFailure(stored: StoredImportCandidate, actor: Review
  * und Duplikate gegen den aktuellen Katalog. Trägt die Freigabe nicht mehr, wird der Kandidat
  * `failed` (mit Gründen im Audit Trail) und es entsteht kein Rezept. Idempotent: ein bereits
  * veröffentlichter Kandidat liefert `ALREADY_PUBLISHED` samt bestehender Recipe-ID, parallele
- * Aufrufe erzeugen höchstens ein Rezept.
+ * Aufrufe erzeugen höchstens ein Rezept. Ein Kandidat aus einer Mock-Quelle wird in Produktion nie
+ * veröffentlicht (F-15); dabei wird nichts geschrieben.
  */
 export async function publishCandidate(candidateId: string, actor: ReviewActor, context: ImportReviewContext): Promise<WorkflowResult> {
   const stored = await loadStoredCandidate(candidateId);
   if (!stored) return { ok: false, error: "NOT_FOUND" };
   if (stored.status === "published") return { ok: false, error: "ALREADY_PUBLISHED", recipeId: stored.publishedRecipeId };
+  if (isDisabledMockSource(stored.candidate.source.type)) return { ok: false, error: "MOCK_SOURCE_DISABLED" };
   if (!canTransition(stored.status, "published")) return { ok: false, error: "NOT_APPROVED" };
 
   const review = reviewStoredCandidate(stored, context);

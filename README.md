@@ -108,18 +108,25 @@ Einzelprofil-Zeit migrierte Konten ohne Passwort gedacht.
 Die Vorlage ist `.env.example`. Next.js liest `.env`; die **Prisma-CLI liest nur `.env`** (nicht
 `.env.local`), deshalb muss mindestens `DATABASE_URL` dort stehen.
 
+**Prüfung beim Start (F-21):** `src/instrumentation.ts` prüft die Variablen beim Start jeder
+Serverinstanz mit `src/lib/config/env.ts`. In Produktion (`NODE_ENV=production`, z.B.
+`npm run start`) bricht jede fehlende oder ungültige Angabe unten den Start mit einer Liste der
+betroffenen Variablen ab (nur Namen, nie Werte). In der Entwicklung gibt es dieselbe Liste nur als
+Warnung im Terminal, der Server startet trotzdem. `npm run build` prüft nicht – die
+Build-Umgebung braucht keine Secrets.
+
 | Variable | Pflicht | Zweck | Umgebung | Standard |
 |---|---|---|---|---|
-| `DATABASE_URL` | ja | Datenbankverbindung (SQLite). Relativ zu `prisma/schema.prisma`, `file:./dev.db` ist also `prisma/dev.db`. | alle | – (Vorlage: `file:./dev.db`) |
-| `AUTH_SECRET` | ja | Signaturschlüssel der Auth.js-Sessions. Fehlt er, bricht Auth.js mit `MissingSecret` ab. | alle | – |
-| `AUTH_TRUST_HOST` | nur selbst gehostete Produktion | `true` = Auth.js vertraut dem Host-Header (hinter einem vertrauenswürdigen Proxy). Ohne diese Variable oder `AUTH_URL` bricht Auth.js bei `NODE_ENV=production` außerhalb von Vercel mit `UntrustedHost` ab. In der Entwicklung nicht nötig. | Produktion | – |
-| `AUTH_URL` | alternativ zu `AUTH_TRUST_HOST` | Öffentliche Basis-URL der App; macht den Host ebenfalls vertrauenswürdig. | Produktion | – |
-| `ANTHROPIC_API_KEY` | optional | Nur für den Food Assistant. Ohne Key antwortet `/api/assistant` mit 503, der Rest der App ist nicht betroffen. | alle | – |
-| `LLM_PROVIDER` | optional | LLM-Anbieter. Einziger unterstützter Wert: `anthropic`; andere Werte führen am Assistant zu 503. | alle | `anthropic` |
-| `LLM_MODEL` | optional | Modell für den Food Assistant. | alle | `claude-sonnet-5` |
-| `NUTRITION_PROVIDER` | optional | Anbieter für den Barcode-Lookup `/api/nutrition/lookup`. Einziger unterstützter Wert: `openfoodfacts` (kein Key, braucht Netzwerk); andere Werte → 503. | alle | `openfoodfacts` |
-| `INTERNAL_REVIEW_EMAILS` | in Produktion für interne Tools | Kommagetrennte E-Mail-Adressen mit Zugriff auf `/internal/*` (Groß-/Kleinschreibung egal). Verhalten siehe „Interne Werkzeuge“. | alle | leer |
-| `NODE_ENV` | nein (setzt Next.js) | `development` bei `npm run dev`, `production` bei `npm run build`/`start`. Steuert u.a. den Zugang zu internen Tools und die Prisma-Logausgabe. | – | von Next.js gesetzt |
+| `DATABASE_URL` | ja | Datenbankverbindung (SQLite). Relativ zu `prisma/schema.prisma`, `file:./dev.db` ist also `prisma/dev.db`. Muss eine Verbindungs-URL sein (`file:…`, `postgresql://…`). | alle | – (Vorlage: `file:./dev.db`) |
+| `AUTH_SECRET` | ja | Signaturschlüssel der Auth.js-Sessions. In Produktion mindestens 32 Zeichen. | alle | – |
+| `AUTH_TRUST_HOST` | in Produktion, falls kein `AUTH_URL` | `true` = Auth.js vertraut dem Host-Header (hinter einem vertrauenswürdigen Proxy). Nur `true` ist erlaubt – Auth.js würde auch `false` als „vertrauen“ lesen; zum Abschalten weglassen. Auf Vercel/Cloudflare Pages nicht nötig. In der Entwicklung nicht nötig. | Produktion | – |
+| `AUTH_URL` | in Produktion, falls kein `AUTH_TRUST_HOST=true` | Öffentliche Basis-URL der App (`https://…`); macht den Host ebenfalls vertrauenswürdig. | Produktion | – |
+| `ANTHROPIC_API_KEY` | in Produktion | Für den Food Assistant (Pflicht, solange `LLM_PROVIDER=anthropic`). In der Entwicklung optional: ohne Key antwortet `/api/assistant` mit 503, der Rest der App ist nicht betroffen. | alle | – |
+| `LLM_PROVIDER` | optional | LLM-Anbieter. Einziger unterstützter Wert: `anthropic`. | alle | `anthropic` |
+| `LLM_MODEL` | optional | Modell für den Food Assistant. Erlaubt sind nur die Modelle in `SUPPORTED_ANTHROPIC_MODELS` (`src/lib/config/env.ts`); ein anderer Wert (z.B. ein Tippfehler) führt am Assistant zu 503. | alle | `claude-sonnet-5` |
+| `NUTRITION_PROVIDER` | optional | Anbieter für den Barcode-Lookup `/api/nutrition/lookup`. Einziger unterstützter Wert: `openfoodfacts` (kein Key, braucht Netzwerk). | alle | `openfoodfacts` |
+| `INTERNAL_REVIEW_EMAILS` | für interne Tools | Kommagetrennte E-Mail-Adressen mit Zugriff auf `/internal/*` (Groß-/Kleinschreibung egal), in **jeder** Umgebung. Leer = niemand hat Zugriff. Verhalten siehe „Interne Werkzeuge“. | alle | leer |
+| `NODE_ENV` | nein (setzt Next.js) | `development` bei `npm run dev`, `production` bei `npm run build`/`start`. Entscheidet, ob Konfigurationsfehler den Start abbrechen, ob Mock-Rezepte importiert/veröffentlicht werden dürfen, und die Prisma-Logausgabe. | – | von Next.js gesetzt |
 
 Tests brauchen keine eigene Konfiguration: die Integrationstests setzen `DATABASE_URL` selbst auf
 temporäre Datenbanken.
@@ -201,19 +208,28 @@ Die Seiten sind nicht in der Navigation verlinkt, nur per URL erreichbar.
 |---|---|---|
 | `/internal/recipe-review` | Import-Queue (mit Statusfilter) und Qualitäts-/Duplikatprüfung des globalen Katalogs | Nein (Statuswahl der Katalog-Liste ist nur lokal im Browser) |
 | `/internal/recipe-review/[id]` | Detail eines Katalogrezepts: Quality Issues, Duplikat-Kandidaten | Nein |
-| `/internal/recipe-review/import-preview` | Vorschau der Import-Pipeline anhand fester Mock-Fixtures | **Ja, der Button „In die Import-Queue übernehmen“** legt Import-Kandidaten in der Datenbank an |
+| `/internal/recipe-review/import-preview` | Vorschau der Import-Pipeline anhand fester Mock-Fixtures | **Ja, der Button „In die Import-Queue übernehmen“** legt Import-Kandidaten in der Datenbank an (nur außerhalb von Produktion, siehe unten) |
 | `/internal/recipe-review/imports/[id]` | Detail eines Import-Kandidaten mit Review-Aktionen | **Ja:** Überarbeitung nötig, Ablehnen, Freigeben, Food-Zuordnung und **Veröffentlichen**. Veröffentlichen legt ein **echtes Rezept im Katalog der verwendeten Datenbank** an (sichtbar für alle Nutzer). Freigeben allein veröffentlicht nichts. |
 
 Zugang (serverseitig in `requireInternalReviewAccess()` und in jeder Server Action geprüft):
 
 - **Login ist immer Pflicht.**
-- Ist `INTERNAL_REVIEW_EMAILS` gesetzt, haben **nur** die dort gelisteten eingeloggten Nutzer Zugriff.
-- Ist die Variable leer, entscheidet `NODE_ENV`:
-  - nicht `production` (z.B. `npm run dev`): **jeder eingeloggte Nutzer** hat Zugriff,
-  - `production` (z.B. `npm run build` + `npm run start`): **niemand** hat Zugriff.
+- Zugriff haben **nur** eingeloggte Nutzer, deren E-Mail in `INTERNAL_REVIEW_EMAILS` steht – in
+  **jeder** Umgebung, auch bei `npm run dev` (F-07). Ist die Variable leer, hat niemand Zugriff.
+- Für die lokale Entwicklung die eigene Konto-E-Mail eintragen, z.B.
+  `INTERNAL_REVIEW_EMAILS=ich@example.com`, und den Dev-Server neu starten.
 - Ohne Berechtigung antworten die Seiten mit 404.
 
-Für jede Umgebung, die andere Personen erreichen können, `INTERNAL_REVIEW_EMAILS` setzen.
+Warum nicht „in der Entwicklung für alle offen“: `NODE_ENV=development` sagt nichts darüber, wer
+den Server erreicht. `next.config.ts` erlaubt Entwicklungszugriffe über `*.trycloudflare.com`-Tunnel;
+ein so geteilter Dev-Server ist öffentlich, und jeder könnte sich registrieren. Mit der Allowlist
+bleibt ein geteilter Dev-Server oder eine Preview geschlossen, bis jemand ausdrücklich eingetragen ist.
+
+**Mock-Rezepte in Produktion (F-15):** Bei `NODE_ENV=production` weist der Server Kandidaten aus
+der Mock-Quelle (`sourceType = "mock"`) ab – sowohl den Import der Fixtures (die Server Action und
+`enqueueImportedRecipe`) als auch das Veröffentlichen (`publishCandidate`), auch bei direktem Aufruf.
+Es wird dabei nichts geschrieben. Die Vorschau bleibt zur Diagnose sichtbar, ohne Import-Button. In
+Entwicklung und Tests funktioniert der Mock-Ablauf wie bisher.
 
 ## Produktion: noch nicht vollständig abgedeckt
 
@@ -233,21 +249,21 @@ Es gibt derzeit **keinen dokumentierten und geprüften Produktionsbetrieb**. Bek
   Daten von vor F-10 bräuchten dieselbe Umrechnung.
 - **Auth:** `AUTH_SECRET` ist Pflicht; bei Selbst-Hosting außerdem `AUTH_TRUST_HOST` oder
   `AUTH_URL` (siehe Tabelle). Die Registrierung ist offen.
-- **Keine Prüfung der Umgebungsvariablen beim Start:** fehlende oder falsche Werte fallen erst zur
-  Laufzeit auf.
+- **Prüfung der Umgebungsvariablen beim Start (F-21):** in Produktion bricht eine fehlende oder
+  ungültige Pflichtangabe den Start ab (siehe „Umgebungsvariablen“). Ob Datenbank und
+  Anthropic-Key tatsächlich funktionieren, prüft der Start nicht (keine Verbindung, kein API-Aufruf).
 - **Food Assistant begrenzt (F-20):** pro Nutzer höchstens 20 Anfragen je Stunde und 100 je
   24 Stunden sowie eine gleichzeitig (sonst 429, beim Limit mit `Retry-After`). Jeder LLM-Aufruf
   hat 30 s Timeout und höchstens 1 Wiederholung. Gespeichert in der Tabelle `AssistantRequest`
   (`src/lib/agents/assistantUsage.ts`); eine bestehende lokale Datenbank braucht dafür einmal
   `npx prisma db push` (fügt nur die Tabelle hinzu). Ein globales Kostenlimit gibt es nicht – das
   bleibt Aufgabe des Monitorings beim API-Anbieter.
-- **F-07 – offener Dev-Zugang zu internen Tools:** ohne `INTERNAL_REVIEW_EMAILS` hat im
-  Entwicklungsmodus jeder eingeloggte Nutzer Zugriff. `next.config.ts` erlaubt Entwicklungszugriffe
-  über `*.trycloudflare.com`-Tunnel; wer den Dev-Server so teilt, sollte die Allowlist setzen.
+- **Interne Tools (F-07):** nur über die Allowlist `INTERNAL_REVIEW_EMAILS`, in jeder Umgebung.
+  Es gibt keine E-Mail-Bestätigung: eine gelistete Adresse sollte bereits zum Konto der
+  berechtigten Person gehören, sonst könnte sie jemand anderes registrieren.
 - **F-13 – veraltete E2E-Tests:** siehe „Tests und Checks“.
-- **F-15 – Mock-Fixture-Import überall erreichbar:** der Import-Button der Import-Vorschau ist nicht
-  auf die Entwicklung beschränkt; wer internen Zugang hat, kann Mock-Rezepte in die Queue und von
-  dort (nach Freigabe) in den Katalog bringen.
+- **Mock-Rezepte (F-15):** in Produktion weder importierbar noch veröffentlichbar (siehe „Interne
+  Werkzeuge“).
 
 (Die Kennungen F-xx beziehen sich auf den Codebase-Audit aus Chapter 22.)
 

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { SectionHeader } from "@/components/ui/SectionHeader";
+import { mockRecipeSourcesAllowed } from "@/lib/config/env";
 import { IMPORT_STATUS_LABELS, QUALITY_SEVERITY_LABELS, REVIEW_CATEGORY_LABELS } from "@/lib/labels";
 import { IMPORT_FIXTURES } from "@/lib/recipes/data/importFixtures";
 import { loadCatalogQualityInputs, loadFoodCatalog } from "@/lib/recipes/recipeService";
@@ -58,14 +59,20 @@ export default async function ImportPreviewPage() {
         />
       </div>
 
-      <form action={enqueueMockFixturesAction} className="mt-6 flex flex-wrap items-center gap-3 rounded-[var(--radius-md)] bg-bg-dim p-4">
-        <p className="min-w-0 flex-1 text-[13px] text-ink-soft">
-          Übernimmt diese Fixtures als Kandidaten in die Import-Queue (Status „Wartet auf Prüfung“). Bereits vorhandene Quellen-IDs werden übersprungen. Es entsteht dabei kein Katalog-Rezept.
+      {mockRecipeSourcesAllowed() ? (
+        <form action={enqueueMockFixturesAction} className="mt-6 flex flex-wrap items-center gap-3 rounded-[var(--radius-md)] bg-bg-dim p-4">
+          <p className="min-w-0 flex-1 text-[13px] text-ink-soft">
+            Übernimmt diese Fixtures als Kandidaten in die Import-Queue (Status „Wartet auf Prüfung“). Bereits vorhandene Quellen-IDs werden übersprungen. Es entsteht dabei kein Katalog-Rezept.
+          </p>
+          <SubmitButton variant="secondary" pendingLabel="Wird übernommen …">
+            In die Import-Queue übernehmen
+          </SubmitButton>
+        </form>
+      ) : (
+        <p className="mt-6 rounded-[var(--radius-md)] bg-bg-dim p-4 text-[13px] text-ink-soft">
+          In Produktion lassen sich Mock-Fixtures nicht in die Import-Queue übernehmen. Die Vorschau bleibt zur Diagnose sichtbar.
         </p>
-        <SubmitButton variant="secondary" pendingLabel="Wird übernommen …">
-          In die Import-Queue übernehmen
-        </SubmitButton>
-      </form>
+      )}
 
       <div className="mt-8 flex flex-col gap-6">
         {results.map(({ fixture, result }) => {

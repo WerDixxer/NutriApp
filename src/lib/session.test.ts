@@ -38,15 +38,42 @@ describe("requireInternalReviewAccess", () => {
     await expect(requireInternalReviewAccess()).rejects.toThrow("REDIRECT:/login");
   });
 
-  it("erlaubt außerhalb von Produktion ohne gesetzte Allowlist jedem eingeloggten Nutzer den Zugriff (lokale Nutzbarkeit ohne Konfiguration)", async () => {
+  it("lokal mit der eigenen E-Mail in der Allowlist ist der Zugriff möglich", async () => {
     vi.stubEnv("NODE_ENV", "development");
-    authMock.mockResolvedValueOnce({ user: { id: "u1", email: "irgendwer@example.com" } });
-    await expect(requireInternalReviewAccess()).resolves.toEqual({ userId: "u1", email: "irgendwer@example.com" });
+    process.env.INTERNAL_REVIEW_EMAILS = "dev@example.com";
+    authMock.mockResolvedValueOnce({ user: { id: "u1", email: "dev@example.com" } });
+    await expect(requireInternalReviewAccess()).resolves.toEqual({ userId: "u1", email: "dev@example.com" });
   });
+
+  it.each(["development", "test"])(
+    "ist ohne Allowlist auch außerhalb von Produktion (%s) geschlossen - z.B. ein per Tunnel geteilter Dev-Server (F-07)",
+    async (nodeEnv) => {
+      vi.stubEnv("NODE_ENV", nodeEnv);
+      authMock.mockResolvedValueOnce({ user: { id: "u1", email: "irgendwer@example.com" } });
+      await expect(requireInternalReviewAccess()).rejects.toThrow("NOT_FOUND");
+    },
+  );
 
   it("ist in Produktion ohne gesetzte Allowlist für niemanden zugänglich (sicher geschlossen)", async () => {
     vi.stubEnv("NODE_ENV", "production");
     authMock.mockResolvedValueOnce({ user: { id: "u1", email: "irgendwer@example.com" } });
+    await expect(requireInternalReviewAccess()).rejects.toThrow("NOT_FOUND");
+  });
+
+  it("in Produktion hat eine gelistete E-Mail Zugriff, eine andere nicht", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    process.env.INTERNAL_REVIEW_EMAILS = "admin@example.com";
+    authMock.mockResolvedValueOnce({ user: { id: "u1", email: "admin@example.com" } });
+    await expect(requireInternalReviewAccess()).resolves.toEqual({ userId: "u1", email: "admin@example.com" });
+
+    authMock.mockResolvedValueOnce({ user: { id: "u2", email: "other@example.com" } });
+    await expect(requireInternalReviewAccess()).rejects.toThrow("NOT_FOUND");
+  });
+
+  it("eine Allowlist nur aus ungültigen Einträgen öffnet nichts", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    process.env.INTERNAL_REVIEW_EMAILS = " , admin, *";
+    authMock.mockResolvedValueOnce({ user: { id: "u1", email: "admin" } });
     await expect(requireInternalReviewAccess()).rejects.toThrow("NOT_FOUND");
   });
 

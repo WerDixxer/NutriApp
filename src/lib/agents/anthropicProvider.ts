@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { DEFAULT_LLM_MODEL, isSupportedLlmModel } from "../config/env";
 import {
   LLMConfigError,
   LLMTimeoutError,
@@ -9,8 +10,6 @@ import {
   type LLMResponse,
   type ToolChoice,
 } from "./llmProvider";
-
-const DEFAULT_MODEL = "claude-sonnet-5";
 
 /**
  * Explizit statt der SDK-Standardwerte (10 Minuten Timeout, 2 Wiederholungen): 30 s pro Versuch
@@ -81,7 +80,9 @@ export class AnthropicProvider implements LLMProvider {
 
   async chat(params: LLMChatParams): Promise<LLMResponse> {
     const client = this.getClient();
-    const model = process.env.LLM_MODEL || DEFAULT_MODEL;
+    const model = process.env.LLM_MODEL?.trim() || DEFAULT_LLM_MODEL;
+    // Ein Tippfehler im Modellnamen ist ein Konfigurationsfehler (503), kein Laufzeitfehler (500).
+    if (!isSupportedLlmModel(model)) throw new LLMConfigError("LLM_MODEL wird nicht unterstützt (siehe src/lib/config/env.ts).");
 
     let response: Anthropic.Message;
     try {

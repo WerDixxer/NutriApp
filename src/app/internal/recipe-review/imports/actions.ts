@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { mockRecipeSourcesAllowed } from "@/lib/config/env";
 import { IMPORT_FIXTURES } from "@/lib/recipes/data/importFixtures";
 import {
   approveCandidate,
@@ -107,10 +108,12 @@ export async function publishCandidateAction(formData: FormData) {
 /**
  * Übernimmt die Mock-Fixtures (Kapitel 20) über die Mock-Quelle in die Queue - die einzige
  * Import-Quelle, solange keine echte externe Quelle angebunden ist. Bereits vorhandene
- * Quellen-IDs werden übersprungen, nie doppelt angelegt.
+ * Quellen-IDs werden übersprungen, nie doppelt angelegt. In Produktion gesperrt (F-15); der
+ * Service weist Mock-Quellen dort zusätzlich selbst ab.
  */
 export async function enqueueMockFixturesAction() {
   const { userId } = await requireInternalReviewAccess();
+  if (!mockRecipeSourcesAllowed()) redirect(`${QUEUE_PATH}?importError=MOCK_SOURCE_DISABLED`);
   const context = await loadImportReviewContext();
   const source = createMockExternalRecipeSource("Mock Recipe Feed", IMPORT_FIXTURES);
 
