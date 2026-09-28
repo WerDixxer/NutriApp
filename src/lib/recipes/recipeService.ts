@@ -22,16 +22,36 @@ import {
   type UnitGrams,
 } from "./types";
 import { formatIngredientLine } from "./units";
+import { readRecipeDietTypes, readRecipeMealSlots, readRecipeStringList } from "./recipeJsonColumns";
+import { JsonColumnError, readJsonColumn, reportUnreadableJsonColumn, skipUnreadableRows } from "../validation/jsonColumn";
+import { storedStringListSchema, storedUnitGramsSchema } from "../validation/jsonColumnSchemas";
 
 type IngredientRow = Awaited<ReturnType<typeof prisma.ingredient.findMany>>[number];
 
-function parseJson<T>(value: string | null, fallback: T): T {
-  if (!value) return fallback;
+/**
+ * Bisheriges Verhalten dieser Datei für unlesbare JSON-Spalten: Standardwert statt Fehler. Das bleibt
+ * für die Food-Zeilen (`loadFoodCatalog` läuft in fast jedem Request) und die Audit-/Match-Eingaben so,
+ * die Spalte wird aber jetzt per Schema geprüft und ein Fallback protokolliert statt still übergangen
+ * (R5D). Der Fallback gilt nur im Speicher, zurückgeschrieben wird nichts.
+ */
+function readOrFallback<T>(read: () => T, fallback: T): T {
   try {
-    return JSON.parse(value) as T;
-  } catch {
+    return read();
+  } catch (error) {
+    if (!(error instanceof JsonColumnError)) throw error;
+    reportUnreadableJsonColumn(error, "Es wird der Standardwert verwendet.");
     return fallback;
   }
+}
+
+function readFoodStringList(row: IngredientRow, column: "allergens" | "aliases"): string[] {
+  return readOrFallback(() => readJsonColumn({ model: "Ingredient", id: row.id, column }, row[column], storedStringListSchema), []);
+}
+
+function readFoodUnitGrams(row: IngredientRow): UnitGrams | undefined {
+  const value = row.unitGrams;
+  if (value === null) return undefined;
+  return readOrFallback(() => readJsonColumn({ model: "Ingredient", id: row.id, column: "unitGrams" }, value, storedUnitGramsSchema), undefined);
 }
 
 function rowToCatalogFood(row: IngredientRow): CatalogFood {
@@ -42,10 +62,10 @@ function rowToCatalogFood(row: IngredientRow): CatalogFood {
     name: row.name,
     category: row.category ?? "other",
     dietClass: (row.dietClass as DietClass | null) ?? "omnivore",
-    allergens: parseJson<string[]>(row.allergens, []),
-    aliases: parseJson<string[]>(row.aliases, []),
+    allergens: readFoodStringList(row, "allergens"),
+    aliases: readFoodStringList(row, "aliases"),
     negligible: row.negligible,
-    unitGrams: parseJson<UnitGrams | undefined>(row.unitGrams, undefined),
+    unitGrams: readFoodUnitGrams(row),
     nutrition: hasNutrition
       ? {
           kcal: row.kcalPer100 ?? 0,
@@ -139,7 +159,9 @@ export async function loadCatalogRecipes(): Promise<CatalogEntry[]> {
   });
   const structured = await loadStructuredIngredients(rows.map((r) => r.id));
 
-  return rows.map((row) => {
+  // Ein Rezept mit unlesbarer JSON-Spalte fällt mit Warnung aus dem Katalog, statt z.B. mit
+  // leerer Allergenliste angezeigt zu werden (R5D).
+  return skipUnreadableRows(rows, (row) => {
     const ingredients = structured.get(row.id) ?? [];
     const recipe: BrowseRecipe = {
       id: row.id,
@@ -152,14 +174,14 @@ export async function loadCatalogRecipes(): Promise<CatalogEntry[]> {
       fatG: row.fatG,
       timeMin: row.totalTimeMin ?? row.prepTimeMin,
       servings: row.servings,
-      mealSlots: parseJson<string[]>(row.mealSlots, []),
-      dietTypes: parseJson<string[]>(row.dietTypes, []),
-      tags: parseJson<string[]>(row.tags, []),
+      mealSlots: readRecipeMealSlots(row),
+      dietTypes: readRecipeDietTypes(row),
+      tags: readRecipeStringList(row, "tags"),
       mealPrepSuitable: row.mealPrepSuitable,
       cuisine: row.cuisine,
-      allergens: parseJson<string[]>(row.allergens, []),
+      allergens: readRecipeStringList(row, "allergens"),
       ingredients,
-      ingredientLines: ingredients.length > 0 ? ingredients.map(formatIngredientLine) : parseJson<string[]>(row.ingredients, []),
+      ingredientLines: ingredients.length > 0 ? ingredients.map(formatIngredientLine) : readRecipeStringList(row, "ingredients"),
     };
     return { recipe, row };
   });
@@ -200,8 +222,8 @@ export async function loadCatalogQualityInputs(): Promise<QualityRecipeInput[]> 
     name: row.name,
     servings: row.servings,
     structuredIngredients: byRecipe.get(row.id) ?? [],
-    freeTextIngredients: parseJson<string[]>(row.ingredients, []),
-    tags: parseJson<string[]>(row.tags, []),
+    freeTextIngredients: readOrFallback(() => readRecipeStringList(row, "ingredients"), []),
+    tags: readOrFallback(() => readRecipeStringList(row, "tags"), []),
   }));
 }
 
@@ -284,7 +306,7 @@ export async function analyzeRecipesForProfile(
   for (const recipe of recipes) {
     const ingredients = structured.get(recipe.id) ?? [];
     const match = matchRecipeToPreferences(
-      { ingredients, ingredientLines: parseJson<string[]>(recipe.ingredients, []) },
+      { ingredients, ingredientLines: readOrFallback(() => readRecipeStringList(recipe, "ingredients"), []) },
       preferences,
       catalog,
     );

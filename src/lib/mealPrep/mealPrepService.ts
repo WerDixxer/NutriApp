@@ -7,6 +7,7 @@ import { buildPrepGroups, buildSoloRecipes, type RecipeInfo } from "./batching";
 import { computeMealPrepScore } from "./scoring";
 import { buildSummary } from "./explain";
 import { loadFoodCatalog } from "../recipes/recipeService";
+import { readRecipeStringList } from "../recipes/recipeJsonColumns";
 import { normalizeIngredientKey } from "./ingredientParser";
 import type { KnownPrice } from "../budget/mealCost";
 import type { MealPrepPlan, MealPrepStrategy, MealPrepWarning, MealRef } from "./types";
@@ -33,7 +34,7 @@ export async function analyzeMealPrep(
     slot: m.slot,
     recipeId: m.recipeId,
     recipeName: m.recipe.name,
-    ingredients: JSON.parse(m.recipe.ingredients) as string[],
+    ingredients: readRecipeStringList(m.recipe, "ingredients"),
     portionMultiplier: m.portionMultiplier,
   }));
 

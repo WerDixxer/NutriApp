@@ -1,10 +1,14 @@
-import type { DietType, MealSlot } from "@prisma/client";
 import { prisma } from "../db";
+import { readRecipeDietTypes, readRecipeMealSlots, readRecipeStringList } from "../recipes/recipeJsonColumns";
 import type { SearchableRecipe } from "./recipeSearch";
 
 type RecipeRow = Awaited<ReturnType<typeof prisma.recipe.findMany>>[number];
 
-/** Gemeinsamer Mapper DB-Recipe -> SearchableRecipe, genutzt von foodAssistant.ts und der Decision Engine. */
+/**
+ * Gemeinsamer Mapper DB-Recipe -> SearchableRecipe, genutzt von foodAssistant.ts und der Decision Engine.
+ * Wirft `JsonColumnError` bei unlesbarer JSON-Spalte; Kandidaten-Pools filtern solche Zeilen per
+ * `skipUnreadableRows` heraus.
+ */
 export function dbRecipeToSearchable(r: RecipeRow): SearchableRecipe {
   return {
     id: r.id,
@@ -16,11 +20,11 @@ export function dbRecipeToSearchable(r: RecipeRow): SearchableRecipe {
     fatG: r.fatG,
     prepTimeMin: r.totalTimeMin ?? r.prepTimeMin,
     servings: r.servings,
-    mealSlots: JSON.parse(r.mealSlots) as MealSlot[],
-    dietTypes: JSON.parse(r.dietTypes) as DietType[],
-    allergens: JSON.parse(r.allergens) as string[],
-    ingredients: JSON.parse(r.ingredients) as string[],
-    tags: JSON.parse(r.tags) as string[],
+    mealSlots: readRecipeMealSlots(r),
+    dietTypes: readRecipeDietTypes(r),
+    allergens: readRecipeStringList(r, "allergens"),
+    ingredients: readRecipeStringList(r, "ingredients"),
+    tags: readRecipeStringList(r, "tags"),
     isTrending: r.isTrending,
   };
 }

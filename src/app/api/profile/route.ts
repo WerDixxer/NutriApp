@@ -5,6 +5,8 @@ import { getApiUserId } from "@/lib/session";
 import { profilePayloadSchema } from "@/lib/validation/profile";
 import { firstZodIssue } from "@/lib/validation/zodError";
 import { invalidJsonBodyResponse, readJsonBody } from "@/lib/validation/jsonBody";
+import { readJsonColumn } from "@/lib/validation/jsonColumn";
+import { storedStringListSchema } from "@/lib/validation/jsonColumnSchemas";
 
 export type { ProfilePayload, TrainingSessionPayload } from "@/lib/validation/profile";
 
@@ -38,9 +40,14 @@ export async function GET() {
   const profile = await prisma.profile.findUnique({ where: { userId }, select: CLIENT_PROFILE_SELECT });
   if (!profile) return NextResponse.json({ profile: null });
 
-  return NextResponse.json({
-    profile: { ...profile, subscribedTrendTags: JSON.parse(profile.subscribedTrendTags) as string[] },
-  });
+  // Unlesbare Trend-Tags werfen JsonColumnError statt still [] zu liefern: Die Trends-Seite speichert
+  // beim nächsten Umschalten die vollständige Liste, ein Fallback würde die gespeicherten Tags überschreiben.
+  const subscribedTrendTags = readJsonColumn(
+    { model: "Profile", id: `userId=${userId}`, column: "subscribedTrendTags" },
+    profile.subscribedTrendTags,
+    storedStringListSchema,
+  );
+  return NextResponse.json({ profile: { ...profile, subscribedTrendTags } });
 }
 
 export async function POST(request: Request) {

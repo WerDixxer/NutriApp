@@ -6,6 +6,7 @@ import { getHouseholdIdForProfile } from "../household";
 import { getPantryContextForHousehold } from "../rotation/rotationService";
 import { getRemainingDailyTargets } from "./remainingTargets";
 import { dbRecipeToSearchable } from "./searchableRecipe";
+import { skipUnreadableRows } from "../validation/jsonColumn";
 import { selectBestCandidate, type RejectedCandidate } from "./decision/selectBestCandidate";
 import { VARIETY_WINDOW_DAYS, type ScoringContext } from "./decision/softScoring";
 import type { HardConstraintContext } from "./decision/hardConstraints";
@@ -101,7 +102,7 @@ export class MultiFactorDecisionEngine implements DecisionEngine {
     });
     const [catalog, candidates] = await Promise.all([
       loadFoodCatalog(),
-      attachStructuredIngredients(dbRecipes.map(dbRecipeToSearchable)),
+      attachStructuredIngredients(skipUnreadableRows(dbRecipes, dbRecipeToSearchable)),
     ]);
     const foodPreferences = createFoodPreferenceContext(
       { favoriteFoods: profile.likedFoods.map((l) => l.label), dislikedFoods: profile.dislikedFoods.map((d) => d.label) },

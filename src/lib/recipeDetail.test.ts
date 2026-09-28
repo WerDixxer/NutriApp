@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { dbRecipeToDetail, type DbRecipeLike } from "./recipeDetail";
+import { JsonColumnError } from "./validation/jsonColumn";
 
 const recipe: DbRecipeLike = {
   id: "r1",
@@ -64,5 +65,23 @@ describe("dbRecipeToDetail", () => {
   it("setzt keinen Hinweis, wenn nichts ersetzt wurde", () => {
     const detail = dbRecipeToDetail(recipe, 1, { ingredientLines: ["100 g Skyr"], kcal: 360, proteinG: 26, carbsG: 39, fatG: 9.4, swaps: [] });
     expect(detail.personalization).toBeUndefined();
+  });
+});
+
+describe("dbRecipeToDetail: gespeicherte JSON-Spalten (R5D)", () => {
+  it("wirft bei unlesbaren Zubereitungsschritten einen JsonColumnError mit Recipe-ID und Spalte", () => {
+    expect(() => dbRecipeToDetail({ ...recipe, instructions: "Schritt 1. Schritt 2." })).toThrow(
+      /^Recipe r1: Spalte "instructions" enthält kein gültiges JSON\.$/,
+    );
+  });
+
+  it("wirft bei Zutaten in falscher Form, statt später an .map zu scheitern", () => {
+    expect(() => dbRecipeToDetail({ ...recipe, ingredients: '{"Reis":100}' })).toThrow(JsonColumnError);
+  });
+
+  it("liest Tags geprüft und lässt fehlende Tags weiterhin weg", () => {
+    expect(dbRecipeToDetail({ ...recipe, tags: '["vegan"]' }).tags).toEqual(["vegan"]);
+    expect(dbRecipeToDetail({ ...recipe, tags: undefined }).tags).toBeUndefined();
+    expect(() => dbRecipeToDetail({ ...recipe, tags: "[1]" })).toThrow(JsonColumnError);
   });
 });

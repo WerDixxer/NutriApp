@@ -30,6 +30,12 @@ import {
   type RawImportedRecipe,
 } from "./recipeImport";
 import { loadCatalogQualityInputs, loadFoodCatalog } from "./recipeService";
+import { readJsonColumn, type JsonColumnRef } from "../validation/jsonColumn";
+import {
+  storedAnyJsonSchema,
+  storedImportIngredientListSchema,
+  storedStringListSchema,
+} from "../validation/jsonColumnSchemas";
 
 /**
  * Persistente Recipe-Import-Queue (Kapitel 21). Speichert Kandidaten aus der Kapitel-20-Pipeline,
@@ -80,20 +86,17 @@ export interface StoredImportCandidate {
   updatedAt: Date;
 }
 
-function parseJsonColumn<T>(row: ImportCandidateRow, column: "rawPayload" | "ingredients" | "instructions" | "tags" | "acknowledgedDuplicateIds"): T {
-  try {
-    return JSON.parse(row[column]) as T;
-  } catch {
-    throw new Error(`RecipeImportCandidate ${row.id}: Spalte "${column}" enthält kein gültiges JSON.`);
-  }
+/** Bezeichner einer JSON-Spalte von `RecipeImportCandidate` für `readJsonColumn` (Fehlermeldungen nennen ID und Spalte). */
+function candidateColumn(row: ImportCandidateRow, column: string): JsonColumnRef {
+  return { model: "RecipeImportCandidate", id: row.id, column };
 }
 
 function toStoredCandidate(row: ImportCandidateRow): StoredImportCandidate {
   if (!isImportQueueStatus(row.status)) {
     throw new Error(`RecipeImportCandidate ${row.id}: unbekannter Status "${row.status}".`);
   }
-  const ingredients = parseJsonColumn<StoredImportIngredient[]>(row, "ingredients");
-  const rawPayload = parseJsonColumn<unknown>(row, "rawPayload");
+  const ingredients: StoredImportIngredient[] = readJsonColumn(candidateColumn(row, "ingredients"), row.ingredients, storedImportIngredientListSchema);
+  const rawPayload = readJsonColumn(candidateColumn(row, "rawPayload"), row.rawPayload, storedAnyJsonSchema);
 
   return {
     id: row.id,
@@ -108,10 +111,10 @@ function toStoredCandidate(row: ImportCandidateRow): StoredImportCandidate {
       name: row.name,
       description: row.description,
       ingredients,
-      instructions: parseJsonColumn<string[]>(row, "instructions"),
+      instructions: readJsonColumn(candidateColumn(row, "instructions"), row.instructions, storedStringListSchema),
       prepTimeMin: row.prepTimeMin,
       servings: row.servings,
-      tags: parseJsonColumn<string[]>(row, "tags"),
+      tags: readJsonColumn(candidateColumn(row, "tags"), row.tags, storedStringListSchema),
       imageRef: row.imageRef,
       importedAt: row.importedAt,
       rawSourceMetadata: (rawPayload as { rawSourceMetadata?: unknown } | null)?.rawSourceMetadata,
@@ -119,7 +122,7 @@ function toStoredCandidate(row: ImportCandidateRow): StoredImportCandidate {
     },
     rawPayload,
     sourceProvider: row.sourceProvider,
-    acknowledgedDuplicateIds: parseJsonColumn<string[]>(row, "acknowledgedDuplicateIds"),
+    acknowledgedDuplicateIds: readJsonColumn(candidateColumn(row, "acknowledgedDuplicateIds"), row.acknowledgedDuplicateIds, storedStringListSchema),
     publishedRecipeId: row.publishedRecipeId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -376,7 +379,9 @@ export async function getImportCandidateDetail(candidateId: string): Promise<Imp
       actorUserId: event.actorUserId,
       actorName: event.actorUserId ? (nameById.get(event.actorUserId) ?? null) : null,
       recipeId: event.recipeId,
-      details: event.details ? (JSON.parse(event.details) as unknown) : null,
+      details: event.details
+        ? readJsonColumn({ model: "RecipeImportEvent", id: event.id, column: "details" }, event.details, storedAnyJsonSchema)
+        : null,
       createdAt: event.createdAt,
     })),
   };

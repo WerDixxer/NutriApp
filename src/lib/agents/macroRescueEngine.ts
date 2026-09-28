@@ -1,6 +1,7 @@
 import { prisma } from "../db";
 import { getRemainingDailyTargets } from "./remainingTargets";
 import { dbRecipeToSearchable } from "./searchableRecipe";
+import { skipUnreadableRows } from "../validation/jsonColumn";
 import { resolveMealSlot } from "./recipeSearch";
 import { selectRescueSolutions } from "./macroRescue/selectRescueSolutions";
 import { DEFAULT_MACRO_TOLERANCES, type MacroTolerances } from "./macroRescue/tolerances";
@@ -64,7 +65,7 @@ export class MacroRescueEngine {
     // Ausgeschlossene Zutaten und Allergien laufen über die gemeinsame Food-Auflösung; ohne beides ist der Katalog unnötig.
     const excluded = input.excludedIngredients ?? [];
     const catalog = excluded.length > 0 || profile.allergies.length > 0 ? await loadFoodCatalog() : undefined;
-    let candidates = dbRecipes.map(dbRecipeToSearchable);
+    let candidates = skipUnreadableRows(dbRecipes, dbRecipeToSearchable);
     if (catalog) candidates = await attachStructuredIngredients(candidates);
 
     // Mahlzeit-Typ und Zeitlimit sind reine Relevanz-Vorfilter (z.B. "Snack"

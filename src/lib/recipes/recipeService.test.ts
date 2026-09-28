@@ -4,6 +4,7 @@ const ingredientFindMany = vi.fn();
 const alternativeFindMany = vi.fn();
 const recipeIngredientFindMany = vi.fn();
 const profileFindUnique = vi.fn();
+const recipeFindMany = vi.fn();
 
 vi.mock("../db", () => ({
   prisma: {
@@ -11,10 +12,11 @@ vi.mock("../db", () => ({
     ingredientAlternative: { findMany: (...args: unknown[]) => alternativeFindMany(...args) },
     recipeIngredient: { findMany: (...args: unknown[]) => recipeIngredientFindMany(...args) },
     profile: { findUnique: (...args: unknown[]) => profileFindUnique(...args) },
+    recipe: { findMany: (...args: unknown[]) => recipeFindMany(...args) },
   },
 }));
 
-const { analyzeRecipesForProfile, loadFoodCatalog, loadStructuredIngredients, toPersonalizationInput } = await import("./recipeService");
+const { analyzeRecipesForProfile, loadCatalogRecipes, loadFoodCatalog, loadStructuredIngredients, toPersonalizationInput } = await import("./recipeService");
 
 function foodRow(id: string, name: string, kcal: number | null, extra: Record<string, unknown> = {}) {
   return {
@@ -88,6 +90,67 @@ describe("loadFoodCatalog", () => {
     ingredientFindMany.mockResolvedValue([foodRow("db-x", "Eiersatz", null)]);
     const catalog = await loadFoodCatalog();
     expect(catalog.get("db-x")?.nutrition).toBeNull();
+  });
+
+  it("liest unitGrams geprüft ein", async () => {
+    ingredientFindMany.mockResolvedValue([foodRow("db-milch", "Milch", 64, { unitGrams: '{"ml":1.03}' })]);
+    const catalog = await loadFoodCatalog();
+    expect(catalog.get("db-milch")?.unitGrams).toEqual({ ml: 1.03 });
+  });
+
+  it("nutzt bei unlesbaren JSON-Spalten wie bisher den Standardwert, meldet das aber je Spalte (R5D)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    ingredientFindMany.mockResolvedValue([
+      foodRow("db-kaputt", "Kaputt", 50, { aliases: "[kaputt", allergens: '{"milch":true}', unitGrams: '{"ml":"1.03"}' }),
+      foodRow("db-ok", "Skyr", 63),
+    ]);
+    const catalog = await loadFoodCatalog();
+    expect(catalog.size).toBe(2);
+    expect(catalog.get("db-kaputt")).toMatchObject({ aliases: [], allergens: [], unitGrams: undefined });
+    expect(catalog.get("db-ok")?.allergens).toEqual(["milch"]);
+    expect(warn.mock.calls.map(([message]) => message)).toEqual([
+      expect.stringContaining('Ingredient db-kaputt: Spalte "allergens" hat nicht die erwartete Form'),
+      expect.stringContaining('Ingredient db-kaputt: Spalte "aliases" enthält kein gültiges JSON'),
+      expect.stringContaining('Ingredient db-kaputt: Spalte "unitGrams" hat nicht die erwartete Form'),
+    ]);
+    warn.mockRestore();
+  });
+});
+
+describe("loadCatalogRecipes (R5D)", () => {
+  function recipeRow(id: string, extra: Record<string, unknown> = {}) {
+    return {
+      id,
+      slug: id,
+      name: id,
+      description: "",
+      kcal: 400,
+      proteinG: 30,
+      carbsG: 40,
+      fatG: 10,
+      totalTimeMin: 20,
+      prepTimeMin: 10,
+      servings: 1,
+      mealSlots: '["LUNCH"]',
+      dietTypes: '["VEGETARIAN"]',
+      tags: "[]",
+      mealPrepSuitable: false,
+      cuisine: null,
+      allergens: '["milch"]',
+      ingredients: '["100 g Skyr"]',
+      ...extra,
+    };
+  }
+
+  it("lässt ein Rezept mit unlesbarer Allergenliste mit Warnung aus, statt es als allergenfrei zu zeigen", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    recipeFindMany.mockResolvedValue([recipeRow("r-ok"), recipeRow("r-kaputt", { allergens: "milch" })]);
+    recipeIngredientFindMany.mockResolvedValue([]);
+    const entries = await loadCatalogRecipes();
+    expect(entries.map((e) => e.recipe.id)).toEqual(["r-ok"]);
+    expect(entries[0].recipe).toMatchObject({ mealSlots: ["LUNCH"], dietTypes: ["VEGETARIAN"], allergens: ["milch"], ingredientLines: ["100 g Skyr"] });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Recipe r-kaputt: Spalte "allergens" enthält kein gültiges JSON'));
+    warn.mockRestore();
   });
 });
 

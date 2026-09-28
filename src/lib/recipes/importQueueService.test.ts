@@ -668,3 +668,34 @@ describe("Audit Trail", () => {
     expect(JSON.stringify(rawEvents)).not.toMatch(/@/);
   });
 });
+
+describe("Gespeicherte JSON-Spalten (R5D)", () => {
+  it("liest die gespeicherten Zutaten geprüft zurück", async () => {
+    const id = await enqueue(IMPORT_FIXTURE_RESOLVABLE);
+    const detail = await service.getImportCandidateDetail(id);
+    expect(detail!.stored.candidate.ingredients.length).toBeGreaterThan(0);
+    expect(detail!.stored.candidate.ingredients.every((i) => typeof i.originalText === "string" && i.manualAssignment === null)).toBe(true);
+    expect(detail!.stored.acknowledgedDuplicateIds).toEqual([]);
+  });
+
+  it.each([
+    ["syntaktisch ungültige Zutaten", "ingredients", "[kaputt", "enthält kein gültiges JSON"],
+    ["Zutaten mit fehlendem Feld", "ingredients", JSON.stringify([{ originalText: "200 g Skyr" }]), "hat nicht die erwartete Form"],
+    ["Tags als Objekt statt Liste", "tags", '{"vegan":true}', "hat nicht die erwartete Form"],
+    ["Duplikat-IDs mit Zahl", "acknowledgedDuplicateIds", "[1]", "hat nicht die erwartete Form"],
+  ] as const)("meldet %s als JsonColumnError mit Kandidaten-ID und Spalte, ohne die Zeile zu ändern", async (_label, column, value, expected) => {
+    const id = await enqueue(IMPORT_FIXTURE_RESOLVABLE);
+    await prisma.recipeImportCandidate.update({ where: { id }, data: { [column]: value } });
+
+    await expect(service.getImportCandidateDetail(id)).rejects.toThrow(`RecipeImportCandidate ${id}: Spalte "${column}" ${expected}`);
+    expect((await candidateRow(id))[column]).toBe(value);
+  });
+
+  it("meldet unlesbare Audit-Details mit Event-ID", async () => {
+    const id = await enqueue(IMPORT_FIXTURE_RESOLVABLE);
+    const event = await prisma.recipeImportEvent.findFirstOrThrow({ where: { candidateId: id } });
+    await prisma.recipeImportEvent.update({ where: { id: event.id }, data: { details: "{kaputt" } });
+
+    await expect(service.getImportCandidateDetail(id)).rejects.toThrow(`RecipeImportEvent ${event.id}: Spalte "details" enthält kein gültiges JSON`);
+  });
+});

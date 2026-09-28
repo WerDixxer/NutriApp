@@ -6,6 +6,8 @@ import { calcFullTargets } from "./nutrition";
 import { matchesAllergen } from "./foodMatching";
 import { createFoodPreferenceContext, isDislikedHit, isLikedHit, type FoodPreferenceContext } from "./recipes/foodPreferences";
 import { loadFoodCatalog, loadStructuredIngredients } from "./recipes/recipeService";
+import { readRecipeDietTypes, readRecipeMealSlots, readRecipeStringList } from "./recipes/recipeJsonColumns";
+import { skipUnreadableRows } from "./validation/jsonColumn";
 import type { StructuredIngredient } from "./recipes/types";
 import {
   MAX_VARIETY_ACCURACY_LOSS,
@@ -134,11 +136,17 @@ export async function getOrGenerateDayPlan(profileId: string, day: CalendarDate,
   const catalog = allergyLabels.length > 0 || hasPreferences ? await loadFoodCatalog() : undefined;
 
   // Allergien sind ein harter Ausschluss (gemeinsame Auflösung, siehe recipes/allergens.ts).
-  const compatibleRecipes = allRecipes.filter((r) => {
-    const dietTypes = JSON.parse(r.dietTypes) as string[];
-    const allergens = JSON.parse(r.allergens) as string[];
-    if (!dietTypes.includes(profile.dietType)) return false;
-    if (matchesAllergen(allergens, allergyLabels, JSON.parse(r.ingredients) as string[], catalog)) return false;
+  // JSON-Spalten einmal geprüft lesen; ein unlesbares Rezept fällt mit Warnung aus dem Pool (R5D).
+  const readableRecipes = skipUnreadableRows(allRecipes, (r) => ({
+    row: r,
+    dietTypes: readRecipeDietTypes(r),
+    allergens: readRecipeStringList(r, "allergens"),
+    ingredients: readRecipeStringList(r, "ingredients"),
+    mealSlots: readRecipeMealSlots(r),
+  }));
+  const compatibleRecipes = readableRecipes.filter((r) => {
+    if (!r.dietTypes.includes(profile.dietType)) return false;
+    if (matchesAllergen(r.allergens, allergyLabels, r.ingredients, catalog)) return false;
     return true;
   });
 
@@ -147,14 +155,12 @@ export async function getOrGenerateDayPlan(profileId: string, day: CalendarDate,
   let preferences: FoodPreferenceContext | null = null;
   let structuredByRecipe = new Map<string, StructuredIngredient[]>();
   if (hasPreferences && catalog) {
-    structuredByRecipe = await loadStructuredIngredients(compatibleRecipes.map((r) => r.id));
+    structuredByRecipe = await loadStructuredIngredients(compatibleRecipes.map((r) => r.row.id));
     preferences = createFoodPreferenceContext({ favoriteFoods: likedLabels, dislikedFoods: dislikedLabels }, catalog);
   }
 
   const candidatesBySlot = new Map<MealSlot, RecipeCandidate[]>();
-  for (const r of compatibleRecipes) {
-    const mealSlots = JSON.parse(r.mealSlots) as MealSlot[];
-    const ingredients = JSON.parse(r.ingredients) as string[];
+  for (const { row: r, mealSlots, ingredients } of compatibleRecipes) {
     const match = preferences?.matchFor({ id: r.id, ingredients, structured: structuredByRecipe.get(r.id) });
     const candidate: RecipeCandidate = {
       id: r.id,

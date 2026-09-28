@@ -1,4 +1,6 @@
 import type { listEvidenceClaims } from "./evidenceService";
+import { readJsonColumn } from "../validation/jsonColumn";
+import { storedStringListSchema } from "../validation/jsonColumnSchemas";
 import type {
   EvidenceAccessType,
   EvidenceClaimStatus,
@@ -12,7 +14,8 @@ import type {
  * in agents/searchableRecipe.ts): parst `limitations` aus dem als JSON-String
  * gespeicherten Feld (SQLite kennt keine nativen Arrays, siehe schema.prisma-
  * Kommentar) in ein echtes `string[]`, damit die Evidence Engine (und alles,
- * was später darauf aufbaut) nie selbst JSON.parse aufrufen muss.
+ * was später darauf aufbaut) nie selbst JSON.parse aufrufen muss. Die Form wird dabei geprüft
+ * (readJsonColumn, R5D); ein unlesbarer Wert wirft `JsonColumnError` mit Claim-ID und Spalte.
  *
  * Bewusst eine eigene, von Prisma entkoppelte Form: die Evidence Engine
  * (src/lib/evidence/engine/) operiert ausschließlich auf `EvidenceClaimView`,
@@ -63,7 +66,7 @@ export function toEvidenceClaimView(row: EvidenceClaimRow): EvidenceClaimView {
     timingContext: row.timingContext,
     direction: row.direction,
     evidenceStrength: row.evidenceStrength,
-    limitations: JSON.parse(row.limitations) as string[],
+    limitations: readJsonColumn({ model: "EvidenceClaim", id: row.id, column: "limitations" }, row.limitations, storedStringListSchema),
     justification: row.justification,
     status: row.status,
     source: {

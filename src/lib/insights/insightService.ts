@@ -13,6 +13,8 @@ import {
 import { detectBudgetInsights } from "./detectors/budgetDetectors";
 import { detectRecipesMatchingAvailablePantry, type RecipeInsightCandidate } from "./detectors/recipeDetectors";
 import { loadFoodCatalog } from "../recipes/recipeService";
+import { readRecipeDietTypes, readRecipeStringList } from "../recipes/recipeJsonColumns";
+import { skipUnreadableRows } from "../validation/jsonColumn";
 import { dedupeAndSortInsights, excludeDismissed } from "./dedupe";
 import type { Insight } from "./types";
 
@@ -80,7 +82,7 @@ export async function getInsightsForProfile(profileId: string, now: Date = new D
         slot: item.slot,
         recipeId: item.recipeId,
         recipeName: item.recipe.name,
-        ingredients: JSON.parse(item.recipe.ingredients) as string[],
+        ingredients: readRecipeStringList(item.recipe, "ingredients"),
         portionMultiplier: item.portionMultiplier,
       })),
     );
@@ -92,15 +94,20 @@ export async function getInsightsForProfile(profileId: string, now: Date = new D
     insights.push(...detectBudgetInsights(budgetSummary, now));
 
     const allergyLabels = profile.allergies.map((a) => a.label);
-    const recipeCandidates: RecipeInsightCandidate[] = recipes
+    // Ein Rezept mit unlesbarer JSON-Spalte fällt mit Warnung aus dem Kandidaten-Pool (R5D).
+    const recipeCandidates: RecipeInsightCandidate[] = skipUnreadableRows(recipes, (r) => ({
+      id: r.id,
+      name: r.name,
+      dietTypes: readRecipeDietTypes(r),
+      allergens: readRecipeStringList(r, "allergens"),
+      ingredients: readRecipeStringList(r, "ingredients"),
+    }))
       .filter((r) => {
-        const dietTypes = JSON.parse(r.dietTypes) as string[];
-        const allergens = JSON.parse(r.allergens) as string[];
-        if (!dietTypes.includes(profile.dietType)) return false;
-        if (matchesAllergen(allergens, allergyLabels, JSON.parse(r.ingredients) as string[], catalog)) return false;
+        if (!r.dietTypes.includes(profile.dietType)) return false;
+        if (matchesAllergen(r.allergens, allergyLabels, r.ingredients, catalog)) return false;
         return true;
       })
-      .map((r) => ({ id: r.id, name: r.name, ingredients: JSON.parse(r.ingredients) as string[] }));
+      .map((r) => ({ id: r.id, name: r.name, ingredients: r.ingredients }));
 
     insights.push(
       ...detectRecipesMatchingAvailablePantry(

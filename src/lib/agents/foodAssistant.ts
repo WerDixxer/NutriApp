@@ -6,12 +6,14 @@ import { extractAssistantQuery } from "./queryExtraction";
 import { assistantIntentSchema, type AssistantIntent, type AssistantQuery } from "./assistantQuery";
 import { searchRecipes, type NutritionQuery } from "./recipeSearch";
 import { dbRecipeToSearchable } from "./searchableRecipe";
+import { skipUnreadableRows } from "../validation/jsonColumn";
 import { getDecisionEngine } from "./decisionEngine";
 import { getMacroRescueEngine } from "./macroRescueEngine";
 import { transformRecipe } from "./recipeTransformer";
 import { getOrGenerateDayPlan } from "../generateMealPlan";
 import { todayForUser } from "../calendarDate";
 import { attachStructuredIngredients, loadFoodCatalog } from "../recipes/recipeService";
+import { readRecipeDietTypes, readRecipeStringList } from "../recipes/recipeJsonColumns";
 
 /**
  * System-Prompt nur noch für die freie Text-Antwort (ANSWER_QUESTION/OTHER).
@@ -84,7 +86,7 @@ async function runSearchRecipesTask(profileId: string, query: AssistantQuery): P
   // Ausgeschlossene Zutaten (auch die Abneigungen des Profils) über die gemeinsame Food-Auflösung.
   const [catalog, candidates] = await Promise.all([
     loadFoodCatalog(),
-    attachStructuredIngredients(dbRecipes.map(dbRecipeToSearchable)),
+    attachStructuredIngredients(skipUnreadableRows(dbRecipes, dbRecipeToSearchable)),
   ]);
   const matches = searchRecipes(nutritionQuery, candidates, 5, catalog);
   const recipes = matches.map((m) => dbRecipeToDetail(dbById.get(m.recipe.id)!));
@@ -190,13 +192,13 @@ async function runTransformRecipeTask(profileId: string, query: AssistantQuery):
       proteinG: original.proteinG,
       carbsG: original.carbsG,
       fatG: original.fatG,
-      ingredients: JSON.parse(original.ingredients) as string[],
-      instructions: JSON.parse(original.instructions) as string[],
+      ingredients: readRecipeStringList(original, "ingredients"),
+      instructions: readRecipeStringList(original, "instructions"),
     },
     query.instruction,
   );
 
-  const dietTypes = new Set(JSON.parse(original.dietTypes) as string[]);
+  const dietTypes = new Set<string>(readRecipeDietTypes(original));
   const lower = query.instruction.toLowerCase();
   if (lower.includes("vegan")) dietTypes.add("VEGAN");
   if (lower.includes("vegetarisch")) dietTypes.add("VEGETARIAN");
@@ -218,7 +220,7 @@ async function runTransformRecipeTask(profileId: string, query: AssistantQuery):
       allergens: original.allergens,
       ingredients: JSON.stringify(transformed.ingredients),
       instructions: JSON.stringify(transformed.instructions),
-      tags: JSON.stringify([...(JSON.parse(original.tags) as string[]), "ki-angepasst"]),
+      tags: JSON.stringify([...readRecipeStringList(original, "tags"), "ki-angepasst"]),
       isCustom: true,
       ownerProfileId: profileId,
       nutritionSource: transformed.nutritionSource,

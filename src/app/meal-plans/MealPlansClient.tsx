@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import { formatCalendarDate, fromDbDate, todayForUser, weekdayIndex } from "@/lib/calendarDate";
 import { SLOT_LABELS, WEEKDAY_LABELS } from "@/lib/labels";
+import { readJsonColumn } from "@/lib/validation/jsonColumn";
+import { storedStringListSchema } from "@/lib/validation/jsonColumnSchemas";
 import { Button } from "@/components/ui/Button";
 import { Pill } from "@/components/ui/Pill";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -99,7 +101,7 @@ function mapApiPlanToDetail(raw: RawApiPlan): MealPlanDetailView {
       kcal: Math.round(meal.recipe.kcal * meal.portionMultiplier),
       proteinG: Math.round(meal.recipe.proteinG * meal.portionMultiplier),
       portionMultiplier: meal.portionMultiplier,
-      reasons: JSON.parse(meal.reasons) as string[],
+      reasons: readJsonColumn({ model: "MealPlanMeal", id: meal.id, column: "reasons" }, meal.reasons, storedStringListSchema),
     })),
   };
 }

@@ -4,6 +4,7 @@ import { calcFullTargets } from "../nutrition";
 import { getPantryContextForHousehold } from "../rotation/rotationService";
 import { getBudgetContextForHousehold } from "../budget/budgetContext";
 import { dbRecipeToSearchable } from "../agents/searchableRecipe";
+import { skipUnreadableRows } from "../validation/jsonColumn";
 import { VARIETY_WINDOW_DAYS } from "../agents/decision/softScoring";
 import { createFoodPreferenceContext } from "../recipes/foodPreferences";
 import { attachStructuredIngredients, loadFoodCatalog } from "../recipes/recipeService";
@@ -100,7 +101,7 @@ export async function buildPlanningContext(
   ]);
   const [pantry, candidates] = await Promise.all([
     getPantryContextForHousehold(householdId, now, catalog),
-    attachStructuredIngredients(dbRecipes.map(dbRecipeToSearchable)),
+    attachStructuredIngredients(skipUnreadableRows(dbRecipes, dbRecipeToSearchable)),
   ]);
   const foodPreferences = createFoodPreferenceContext(
     {

@@ -201,6 +201,14 @@ describe("GET /api/profile (F-02)", () => {
     session.userId = null;
     expect((await GET()).status).toBe(401);
   });
+
+  it("liefert bei unlesbaren Trend-Tags keinen stillen Fallback [], der beim nächsten Speichern die Tags überschreiben würde (R5D)", async () => {
+    const { user, profile } = await createUserWithProfile();
+    await prisma.profile.update({ where: { id: profile.id }, data: { subscribedTrendTags: "high-protein,vegan" } });
+
+    await expect(GET()).rejects.toThrow(`Profile userId=${user.id}: Spalte "subscribedTrendTags" enthält kein gültiges JSON.`);
+    expect((await prisma.profile.findUniqueOrThrow({ where: { id: profile.id } })).subscribedTrendTags).toBe("high-protein,vegan");
+  });
 });
 
 // ---------------------------------------------------------------------------

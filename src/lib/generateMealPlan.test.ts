@@ -323,6 +323,27 @@ describe("Wochenverwendung gehört zu genau einem Generierungslauf", () => {
   });
 });
 
+describe("unlesbare Rezeptdaten (R5D)", () => {
+  it("lässt ein Rezept mit kaputter JSON-Spalte mit Warnung aus dem Pool, statt die Planung scheitern zu lassen", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    recipes = [
+      fakeRecipe("kaputt-json", "BREAKFAST", { ingredients: "100 g Reis" }),
+      fakeRecipe("kaputt-slot", "BREAKFAST", { mealSlots: JSON.stringify(["BRUNCH"]) }),
+      ...recipes,
+    ];
+
+    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+
+    const chosen = plans.flatMap((p) => p.items.map((i) => i.recipeId));
+    expect(chosen).not.toContain("kaputt-json");
+    expect(chosen).not.toContain("kaputt-slot");
+    expect(new Set(slotRecipeIds(plans, "BREAKFAST")).size).toBe(7);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Recipe kaputt-json: Spalte "ingredients" enthält kein gültiges JSON'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Recipe kaputt-slot: Spalte "mealSlots" hat nicht die erwartete Form'));
+    warn.mockRestore();
+  });
+});
+
 describe("bereits gespeicherte Tage", () => {
   it("bleiben unverändert und werden nicht neu erzeugt", async () => {
     const stored = await getOrGenerateDayPlan(PROFILE_ID, "2026-09-18", new Map());

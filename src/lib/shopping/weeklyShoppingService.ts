@@ -6,6 +6,7 @@ import type { MealForAggregation } from "../mealPrep/aggregation";
 import type { PantryItemForMatch } from "../mealPrep/enrichment";
 import type { FoodCatalog } from "../recipes/catalog";
 import { loadFoodCatalog } from "../recipes/recipeService";
+import { readRecipeStringList } from "../recipes/recipeJsonColumns";
 import type { RotationUrgency } from "../rotation/types";
 import { calculateWeeklyShopping, type WeeklyShoppingCalculation } from "./weeklyShopping";
 
@@ -62,7 +63,7 @@ export async function getWeeklyShoppingForProfile(
       slot: item.slot,
       recipeId: item.recipeId,
       recipeName: item.recipe.name,
-      ingredients: JSON.parse(item.recipe.ingredients) as string[],
+      ingredients: readRecipeStringList(item.recipe, "ingredients"),
       portionMultiplier: item.portionMultiplier,
     })),
   );

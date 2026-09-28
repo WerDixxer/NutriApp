@@ -1,4 +1,5 @@
 import type { RecipeDetail } from "@/components/RecipeDetailModal";
+import { readRecipeStringList } from "./recipes/recipeJsonColumns";
 import { scaleIngredientText } from "./scaleIngredient";
 
 export interface DbRecipeLike {
@@ -44,7 +45,7 @@ export function dbRecipeToDetail(
 ): RecipeDetail {
   const scale = (n: number) => Math.round(n * portionMultiplier * 10) / 10;
   const source = personalization ?? {
-    ingredientLines: JSON.parse(recipe.ingredients) as string[],
+    ingredientLines: readRecipeStringList(recipe, "ingredients"),
     kcal: recipe.kcal,
     proteinG: recipe.proteinG,
     carbsG: recipe.carbsG,
@@ -63,10 +64,10 @@ export function dbRecipeToDetail(
     prepTimeMin: recipe.totalTimeMin ?? recipe.prepTimeMin,
     servings: recipe.servings,
     ingredients,
-    instructions: JSON.parse(recipe.instructions) as string[],
+    instructions: readRecipeStringList(recipe, "instructions"),
     isTrending: recipe.isTrending,
     trendSource: recipe.trendSource,
-    tags: recipe.tags ? (JSON.parse(recipe.tags) as string[]) : undefined,
+    tags: recipe.tags ? readRecipeStringList({ id: recipe.id, tags: recipe.tags }, "tags") : undefined,
     portionMultiplier,
     ...(personalization && personalization.swaps.length > 0
       ? { personalization: { swaps: personalization.swaps } }

@@ -1,6 +1,8 @@
 import { requireSessionUserId } from "@/lib/session";
 import { getCurrentHouseholdContextWithMembers } from "@/lib/household/context";
 import { getMealPlan, listMealPlans } from "@/lib/mealPlanner/mealPlanService";
+import { readJsonColumn } from "@/lib/validation/jsonColumn";
+import { storedStringListSchema } from "@/lib/validation/jsonColumnSchemas";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import MealPlansClient, { type MealPlanDetailView, type MealPlanMealView, type MealPlanSummaryView, type MemberOptionView } from "./MealPlansClient";
 import NoHouseholdNotice from "./NoHouseholdNotice";
@@ -61,7 +63,7 @@ export default async function MealPlansPage() {
           kcal: Math.round(meal.recipe.kcal * meal.portionMultiplier),
           proteinG: Math.round(meal.recipe.proteinG * meal.portionMultiplier),
           portionMultiplier: meal.portionMultiplier,
-          reasons: JSON.parse(meal.reasons) as string[],
+          reasons: readJsonColumn({ model: "MealPlanMeal", id: meal.id, column: "reasons" }, meal.reasons, storedStringListSchema),
         })),
       }
     : null;
