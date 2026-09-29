@@ -154,19 +154,22 @@ export default function WeeklyPlanLedger({
   insightsByDay: Record<string, InsightView[]>;
 }) {
   const [openKey, setOpenKey] = useState<string | null>(initialOpenKey);
-  const [selected, setSelected] = useState<{ recipeId: string; portionMultiplier: number } | null>(null);
+  const [selected, setSelected] = useState<Pick<LedgerMeal, "recipeId" | "portionMultiplier" | "plannedRecipe"> | null>(null);
   const lastTriggerRef = useRef<HTMLElement | null>(null);
 
   const openMeal = useCallback((meal: LedgerMeal, trigger: HTMLElement) => {
     lastTriggerRef.current = trigger;
-    setSelected({ recipeId: meal.recipeId, portionMultiplier: meal.portionMultiplier });
+    setSelected({ recipeId: meal.recipeId, portionMultiplier: meal.portionMultiplier, plannedRecipe: meal.plannedRecipe });
   }, []);
   const closeMeal = useCallback(() => setSelected(null), []);
 
-  // Das Rezept wird erst beim Öffnen auf die geplante Portion umgerechnet.
+  // Das Rezept wird erst beim Öffnen auf die geplante Portion umgerechnet. Name und Nährwerte wie
+  // geplant (Snapshot, R5E), Zutaten und Zubereitung aus dem aktuellen Rezept.
   const detail = useMemo(() => {
     const recipe = selected ? recipes[selected.recipeId] : undefined;
-    return recipe && selected ? dbRecipeToDetail({ ...recipe, imageQuery: null }, selected.portionMultiplier) : null;
+    return recipe && selected
+      ? dbRecipeToDetail({ ...recipe, ...selected.plannedRecipe, imageQuery: null }, selected.portionMultiplier)
+      : null;
   }, [recipes, selected]);
 
   return (

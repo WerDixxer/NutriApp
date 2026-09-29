@@ -139,13 +139,20 @@ describe("Haushalts-Planer (Fall D): Rezept eines anderen Mitglieds", () => {
   });
 });
 
+/** Der heutige Tag (TODAY) ist bearbeitbar und wird immer erzeugt. */
+async function todaysDayPlan(profileId: string) {
+  const plan = await getOrGenerateDayPlan(profileId, TODAY, TODAY);
+  if (!plan) throw new Error("Der heutige Tag muss einen Plan haben.");
+  return plan;
+}
+
 describe("Tagesplaner /plan und Dashboard (Fall C): eigenes Rezept", () => {
   it("schlägt das eigene Erdnuss-Rezept ohne Allergen-Angabe bei Erdnuss-Allergie nicht vor", async () => {
     const c = await person("C", ["Erdnüsse"]);
     await customRecipe(c.profile.id, "Erdnuss-Toast", PEANUT_TOAST, ["BREAKFAST"]);
     await customRecipe(c.profile.id, "Tomaten-Reis", TOMATO_RICE, ["LUNCH", "DINNER"]);
 
-    const plan = await getOrGenerateDayPlan(c.profile.id, TODAY);
+    const plan = await todaysDayPlan(c.profile.id);
     const names = plan.items.map((item) => item.recipe.name);
     expect(names).not.toContain("Erdnuss-Toast");
     expect(names).toContain("Tomaten-Reis");
@@ -156,7 +163,7 @@ describe("Tagesplaner /plan und Dashboard (Fall C): eigenes Rezept", () => {
     await customRecipe(c.profile.id, "Skyr-Bowl", SKYR_BOWL, ["BREAKFAST"]);
     await customRecipe(c.profile.id, "Tomaten-Reis", TOMATO_RICE, ["LUNCH", "DINNER"]);
 
-    const plan = await getOrGenerateDayPlan(c.profile.id, TODAY);
+    const plan = await todaysDayPlan(c.profile.id);
     expect(plan.items.map((item) => item.recipe.name)).not.toContain("Skyr-Bowl");
   });
 
@@ -165,7 +172,7 @@ describe("Tagesplaner /plan und Dashboard (Fall C): eigenes Rezept", () => {
     await customRecipe(c.profile.id, "Erdnuss-Toast", PEANUT_TOAST, ["BREAKFAST"]);
     await customRecipe(c.profile.id, "Tomaten-Reis", TOMATO_RICE, ["LUNCH", "DINNER"]);
 
-    const plan = await getOrGenerateDayPlan(c.profile.id, TODAY);
+    const plan = await todaysDayPlan(c.profile.id);
     expect(plan.items.map((item) => item.recipe.name)).toContain("Erdnuss-Toast");
   });
 });

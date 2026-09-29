@@ -1,6 +1,7 @@
 import { addDays, calendarDateParts, type CalendarDate } from "./calendarDate";
 import { SLOT_LABELS, WEEKDAY_LABELS } from "./labels";
 import type { DbRecipeLike } from "./recipeDetail";
+import { recipeAsPlanned, type PlannableRecipe, type StoredRecipeSnapshot } from "./recipeAsPlanned";
 
 /**
  * Reine Aufbereitung des persönlichen Wochenplans (MealPlanDay/MealPlanItem)
@@ -31,12 +32,13 @@ const TRAINING_SLOTS = new Set(["PRE_WORKOUT", "POST_WORKOUT"]);
 /** Ab dieser Abweichung von 1x wird die Portionsgröße angezeigt (wie im Rezept-Dialog). */
 const PORTION_DISPLAY_THRESHOLD = 0.05;
 
-export interface LedgerPlanItem {
+/** Ein Planeintrag mit Rezept-Snapshot (R5E); ohne Snapshot (Eintrag von vor R5E) gilt das aktuelle Rezept. */
+export interface LedgerPlanItem extends StoredRecipeSnapshot {
   id: string;
   slot: string;
   time: string;
   portionMultiplier: number;
-  recipe: { id: string; name: string; kcal: number };
+  recipe: { id: string } & PlannableRecipe;
 }
 
 export interface LedgerMeal {
@@ -50,6 +52,8 @@ export interface LedgerMeal {
   /** Kalorien der geplanten Portion (Rezept-kcal x Portionsfaktor), gerundet. */
   kcal: number;
   portionMultiplier: number;
+  /** Name und Nährwerte je Portion, wie geplant (siehe recipeAsPlanned.ts) - für den Rezept-Dialog. */
+  plannedRecipe: PlannableRecipe;
 }
 
 export interface LedgerDay {
@@ -106,16 +110,20 @@ export function formatPortionLabel(multiplier: number): string | null {
 function buildMeals(items: LedgerPlanItem[]): LedgerMeal[] {
   return [...items]
     .sort((a, b) => a.time.localeCompare(b.time))
-    .map((item) => ({
-      id: item.id,
-      time: item.time,
-      slot: item.slot,
-      slotLabel: SLOT_LABELS[item.slot] ?? item.slot,
-      recipeId: item.recipe.id,
-      name: item.recipe.name,
-      kcal: Math.round(item.recipe.kcal * item.portionMultiplier),
-      portionMultiplier: item.portionMultiplier,
-    }));
+    .map((item) => {
+      const { name, kcal, proteinG, carbsG, fatG } = recipeAsPlanned(item);
+      return {
+        id: item.id,
+        time: item.time,
+        slot: item.slot,
+        slotLabel: SLOT_LABELS[item.slot] ?? item.slot,
+        recipeId: item.recipe.id,
+        name,
+        kcal: Math.round(kcal * item.portionMultiplier),
+        portionMultiplier: item.portionMultiplier,
+        plannedRecipe: { name, kcal, proteinG, carbsG, fatG },
+      };
+    });
 }
 
 function buildHeadline(meals: LedgerMeal[]): { headline: string; extraCount: number } {
@@ -147,7 +155,7 @@ export function buildWeekLedger({
 
     const meals = buildMeals(plan.items);
     const { headline, extraCount } = buildHeadline(meals);
-    const kcalTotal = Math.round(plan.items.reduce((sum, item) => sum + item.recipe.kcal * item.portionMultiplier, 0));
+    const kcalTotal = Math.round(plan.items.reduce((sum, item) => sum + recipeAsPlanned(item).kcal * item.portionMultiplier, 0));
 
     return {
       key: date,
@@ -225,6 +233,9 @@ export type PlanRecipe = Pick<
  * Jedes Rezept der Woche genau einmal (nicht je Mahlzeit): Zutaten und Schritte
  * stehen so nur einmal in den Seitendaten, auch wenn ein Rezept mehrfach
  * vorkommt. Die Portion wird erst beim Öffnen angewendet.
+ *
+ * Diese Werte sind das aktuelle Rezept. Name und Nährwerte zeigt der Dialog wie
+ * geplant, aus `LedgerMeal.plannedRecipe` (Snapshot, R5E).
  */
 export function collectPlanRecipes(plans: { items: { recipe: PlanRecipe }[] }[]): Record<string, PlanRecipe> {
   const recipes: Record<string, PlanRecipe> = {};

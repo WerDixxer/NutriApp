@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { formatCalendarDate, fromDbDate, todayForUser, weekdayIndex } from "@/lib/calendarDate";
 import { SLOT_LABELS, WEEKDAY_LABELS } from "@/lib/labels";
+import { recipeAsPlanned } from "@/lib/recipeAsPlanned";
 import { readJsonColumn } from "@/lib/validation/jsonColumn";
 import { storedStringListSchema } from "@/lib/validation/jsonColumnSchemas";
 import { Button } from "@/components/ui/Button";
@@ -45,7 +46,8 @@ export interface MealPlanDetailView {
   startDate: string;
   endDate: string;
   status: "DRAFT" | "ACTIVE" | "ARCHIVED";
-  members: { householdMemberId: string; name: string | null }[];
+  /** `householdMemberId` null: ein ehemaliges Mitglied, das den Haushalt inzwischen verlassen hat (R5E). */
+  members: { householdMemberId: string | null; name: string | null }[];
   meals: MealPlanMealView[];
 }
 
@@ -71,13 +73,18 @@ interface RawApiPlan {
   startDate: string;
   endDate: string;
   status: "DRAFT" | "ACTIVE" | "ARCHIVED";
-  members: { householdMemberId: string; householdMember: { user: { name: string | null } } }[];
+  members: { householdMemberId: string | null; householdMember: { user: { name: string | null } } | null }[];
   meals: {
     id: string;
     date: string;
     slot: string;
     recipeId: string;
-    recipe: { name: string; imageQuery: string | null; kcal: number; proteinG: number };
+    recipe: { name: string; imageQuery: string | null; kcal: number; proteinG: number; carbsG: number; fatG: number };
+    recipeName: string | null;
+    recipeKcal: number | null;
+    recipeProteinG: number | null;
+    recipeCarbsG: number | null;
+    recipeFatG: number | null;
     portionMultiplier: number;
     reasons: string;
   }[];
@@ -90,19 +97,22 @@ function mapApiPlanToDetail(raw: RawApiPlan): MealPlanDetailView {
     startDate: raw.startDate,
     endDate: raw.endDate,
     status: raw.status,
-    members: raw.members.map((m) => ({ householdMemberId: m.householdMemberId, name: m.householdMember.user.name })),
-    meals: raw.meals.map((meal) => ({
-      id: meal.id,
-      date: meal.date,
-      slot: meal.slot as MealPlanMealView["slot"],
-      recipeId: meal.recipeId,
-      recipeName: meal.recipe.name,
-      imageQuery: meal.recipe.imageQuery,
-      kcal: Math.round(meal.recipe.kcal * meal.portionMultiplier),
-      proteinG: Math.round(meal.recipe.proteinG * meal.portionMultiplier),
-      portionMultiplier: meal.portionMultiplier,
-      reasons: readJsonColumn({ model: "MealPlanMeal", id: meal.id, column: "reasons" }, meal.reasons, storedStringListSchema),
-    })),
+    members: raw.members.map((m) => ({ householdMemberId: m.householdMemberId, name: m.householdMember?.user.name ?? null })),
+    meals: raw.meals.map((meal) => {
+      const planned = recipeAsPlanned(meal);
+      return {
+        id: meal.id,
+        date: meal.date,
+        slot: meal.slot as MealPlanMealView["slot"],
+        recipeId: meal.recipeId,
+        recipeName: planned.name,
+        imageQuery: meal.recipe.imageQuery,
+        kcal: Math.round(planned.kcal * meal.portionMultiplier),
+        proteinG: Math.round(planned.proteinG * meal.portionMultiplier),
+        portionMultiplier: meal.portionMultiplier,
+        reasons: readJsonColumn({ model: "MealPlanMeal", id: meal.id, column: "reasons" }, meal.reasons, storedStringListSchema),
+      };
+    }),
   };
 }
 

@@ -17,6 +17,7 @@ import {
 import { MAX_RATE_KG_PER_WEEK } from "@/lib/nutrition";
 import { suggestAllergens } from "@/lib/recipes/allergens";
 import { suggestFoods, type SuggestionFood } from "@/lib/recipes/foodSuggestions";
+import PlanAdaptationDialog from "./PlanAdaptationDialog";
 
 type GoalKey = keyof typeof MAX_RATE_KG_PER_WEEK;
 
@@ -83,6 +84,12 @@ export default function OnboardingForm({ foods }: { foods: SuggestionFood[] }) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [askPlanAdaptation, setAskPlanAdaptation] = useState(false);
+
+  function goToDashboard() {
+    router.push("/dashboard");
+    router.refresh();
+  }
 
   // Lieblinge und Abneigungen teilen sich dieselben Katalog-Vorschläge.
   const suggestFood = (query: string, selected: string[]) => suggestFoods(foods, query, { exclude: selected });
@@ -175,12 +182,15 @@ export default function OnboardingForm({ foods }: { foods: SuggestionFood[] }) {
           trainingSessions,
         }),
       });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error ?? "Fehler beim Speichern.");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Fehler beim Speichern.");
+      // Das Profil ist gespeichert, die Pläne sind unverändert. Kann die Änderung den Plan beeinflussen,
+      // entscheidet der Nutzer, ob heutige und künftige Pläne angepasst werden (R5E).
+      if (data.planAdaptation?.needed) {
+        setAskPlanAdaptation(true);
+        return;
       }
-      router.push("/dashboard");
-      router.refresh();
+      goToDashboard();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unbekannter Fehler");
     } finally {
@@ -460,6 +470,8 @@ export default function OnboardingForm({ foods }: { foods: SuggestionFood[] }) {
         <Activity className="h-4 w-4" />
         {submitting ? "Speichern…" : "Speichern & Plan erstellen"}
       </Button>
+
+      <PlanAdaptationDialog open={askPlanAdaptation} onDone={goToDashboard} />
     </form>
   );
 }

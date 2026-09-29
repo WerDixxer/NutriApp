@@ -1,5 +1,6 @@
 import { addDays, todayForUser, type CalendarDate } from "../calendarDate";
 import { computeJointPortionScales, type RecipeCandidate } from "../planner";
+import { recipeSnapshotOf } from "../recipeAsPlanned";
 import type { MacroTarget } from "../nutrition";
 import type { SearchableRecipe } from "../agents/recipeSearch";
 import { filterHouseholdCandidates } from "./hardConstraints";
@@ -122,7 +123,14 @@ export function generateMealPlan(context: PlanningContext, input: GeneratePlanIn
       }
 
       dayChoices.push({ slot: slotTarget.slot, candidate: best.candidate, priorScale: estimatePortionScale(slotTarget.kcal, best.candidate.kcal) });
-      meals.push({ date, slot: slotTarget.slot, recipeId: best.candidate.id, recipeName: best.candidate.name, portionMultiplier: dayChoices.at(-1)!.priorScale, reasons: best.reasons });
+      meals.push({
+        date,
+        slot: slotTarget.slot,
+        recipeId: best.candidate.id,
+        ...recipeSnapshotOf(best.candidate),
+        portionMultiplier: dayChoices.at(-1)!.priorScale,
+        reasons: best.reasons,
+      });
 
       inPlanRecipeCounts.set(best.candidate.id, (inPlanRecipeCounts.get(best.candidate.id) ?? 0) + 1);
       for (const ing of best.candidate.ingredients) usedIngredientsInPlan.add(ing);

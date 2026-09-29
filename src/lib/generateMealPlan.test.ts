@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { addDays, fromDbDate, type CalendarDate } from "./calendarDate";
+import type { RecipeUsage } from "./generateMealPlan";
 
 // Kleine In-Memory-Nachbildung der vier verwendeten Prisma-Aufrufe, damit die
 // echte Generierungslogik (Reihenfolge, Wochenverwendung, Speicherung) läuft.
@@ -85,6 +86,27 @@ const { getOrGenerateDayPlan, getOrGenerateWeekPlan } = await import("./generate
 
 const PROFILE_ID = "profile-1";
 const MONDAY: CalendarDate = "2026-09-14";
+/**
+ * Fester Kalendertag "heute" statt der echten Uhr: Die Tests planen die Woche ab ihrem Montag, alle
+ * Tage darin sind bearbeitbar. Die Bearbeitungsgrenze selbst prüft der Block "Bearbeitungsgrenze (R5E)".
+ */
+const TODAY: CalendarDate = MONDAY;
+
+/** Ein bearbeitbarer Tag (ab `today`) wird immer gelesen oder erzeugt, das Ergebnis ist nie null. */
+async function editableDayPlan(day: CalendarDate, weekUsage?: RecipeUsage, today: CalendarDate = TODAY) {
+  const plan = await getOrGenerateDayPlan(PROFILE_ID, day, today, weekUsage);
+  if (!plan) throw new Error(`${day} ist ab ${today} bearbeitbar und muss einen Plan haben.`);
+  return plan;
+}
+
+/** Eine Woche, deren Tage alle bearbeitbar sind (ab `TODAY`). */
+async function editableWeekPlan(weekStart: CalendarDate) {
+  const plans = await getOrGenerateWeekPlan(PROFILE_ID, weekStart, TODAY);
+  return plans.map((plan, i) => {
+    if (!plan) throw new Error(`Tag ${i} der Woche ab ${weekStart} ist bearbeitbar und muss einen Plan haben.`);
+    return plan;
+  });
+}
 
 function fakeRecipe(id: string, slot: string, overrides: Partial<FakeRecipe> = {}): FakeRecipe {
   // Makro-Zusammensetzung nahe an den Slot-Zielen (Protein ~25 %, Carbs ~45 %, Fett ~30 % der Kalorien).
@@ -131,7 +153,7 @@ function baseProfile(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function slotRecipeIds(plans: Awaited<ReturnType<typeof getOrGenerateWeekPlan>>, slot: string, time?: string) {
+function slotRecipeIds(plans: Awaited<ReturnType<typeof editableWeekPlan>>, slot: string, time?: string) {
   return plans.map((p) => p.items.find((i) => i.slot === slot && (!time || i.time === time))?.recipeId);
 }
 
@@ -153,7 +175,7 @@ beforeEach(() => {
 
 describe("getOrGenerateWeekPlan: Variety innerhalb der Woche", () => {
   it("wählt bei genug gleich passenden Rezepten an keinem Tag dasselbe Frühstück, Mittag- und Abendessen", async () => {
-    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    const plans = await editableWeekPlan(MONDAY);
 
     expect(plans).toHaveLength(7);
     for (const [slot] of [["BREAKFAST"], ["LUNCH"], ["DINNER"]]) {
@@ -163,14 +185,14 @@ describe("getOrGenerateWeekPlan: Variety innerhalb der Woche", () => {
   });
 
   it("erzeugt fehlende Tage nacheinander, in Datumsreihenfolge", async () => {
-    await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    await editableWeekPlan(MONDAY);
 
     expect(createdDays).toEqual(["2026-09-14", "2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18", "2026-09-19", "2026-09-20"]);
   });
 
   it("Gegenprobe: unabhängig erzeugte Tage (jeder mit leerer Verwendung) wiederholen dieselben Rezepte", async () => {
     const plans = [];
-    for (let i = 0; i < 7; i++) plans.push(await getOrGenerateDayPlan(PROFILE_ID, addDays(MONDAY, i), new Map()));
+    for (let i = 0; i < 7; i++) plans.push(await editableDayPlan(addDays(MONDAY, i), new Map()));
 
     expect(new Set(slotRecipeIds(plans, "BREAKFAST")).size).toBe(1);
     expect(new Set(slotRecipeIds(plans, "LUNCH")).size).toBe(1);
@@ -179,7 +201,7 @@ describe("getOrGenerateWeekPlan: Variety innerhalb der Woche", () => {
   it("erlaubt Wiederholung, wenn es pro Slot nur ein passendes Rezept gibt", async () => {
     recipes = [fakeRecipe("b1", "BREAKFAST"), fakeRecipe("s1", "SNACK"), fakeRecipe("l1", "LUNCH"), fakeRecipe("d1", "DINNER")];
 
-    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    const plans = await editableWeekPlan(MONDAY);
 
     expect(slotRecipeIds(plans, "BREAKFAST")).toEqual(Array(7).fill("b1"));
     expect(slotRecipeIds(plans, "DINNER")).toEqual(Array(7).fill("d1"));
@@ -189,7 +211,7 @@ describe("getOrGenerateWeekPlan: Variety innerhalb der Woche", () => {
   it("wiederholt bei zu kleinem Pool erst, wenn alle Rezepte einmal dran waren", async () => {
     recipes = [...recipesFor("BREAKFAST", "b", 3), fakeRecipe("s1", "SNACK"), fakeRecipe("l1", "LUNCH"), fakeRecipe("d1", "DINNER")];
 
-    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    const plans = await editableWeekPlan(MONDAY);
     const breakfasts = slotRecipeIds(plans, "BREAKFAST");
 
     expect(breakfasts.slice(0, 3)).toEqual(["b1", "b2", "b3"]);
@@ -206,7 +228,7 @@ describe("getOrGenerateWeekPlan: Variety innerhalb der Woche", () => {
       ...recipesFor("LUNCH", "l", 3),
     ];
 
-    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    const plans = await editableWeekPlan(MONDAY);
     const lunches = slotRecipeIds(plans, "LUNCH");
 
     // +0.5 (liked) gegen höchstens -0.3 (dreimal benutzt): das Lieblingsgericht bleibt vorn.
@@ -222,7 +244,7 @@ describe("getOrGenerateWeekPlan: Variety innerhalb der Woche", () => {
       fakeRecipe("l-riesig", "LUNCH", { kcal: 20000, proteinG: 1240, carbsG: 2240, fatG: 680 }),
     ];
 
-    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    const plans = await editableWeekPlan(MONDAY);
 
     expect(slotRecipeIds(plans, "LUNCH")).toEqual(Array(7).fill("l-passend"));
     // Die übrigen Slots rotieren weiter, die Auswahl fällt nur für den betroffenen Tag zurück.
@@ -232,13 +254,13 @@ describe("getOrGenerateWeekPlan: Variety innerhalb der Woche", () => {
   it("wechselt dagegen ab, wenn das zweite Rezept nährwertlich gleichwertig ist", async () => {
     recipes = [...recipes.filter((r) => !r.id.startsWith("l")), fakeRecipe("l-a", "LUNCH"), fakeRecipe("l-b", "LUNCH")];
 
-    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    const plans = await editableWeekPlan(MONDAY);
 
     expect(slotRecipeIds(plans, "LUNCH").slice(0, 4)).toEqual(["l-a", "l-b", "l-a", "l-b"]);
   });
 
   it("hält Portionsgrenzen (0.4x bis 2.5x) und die Kalorienziele der Tage ein", async () => {
-    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    const plans = await editableWeekPlan(MONDAY);
 
     for (const plan of plans) {
       const scales = plan.items.map((i) => i.portionMultiplier);
@@ -259,7 +281,7 @@ describe("getOrGenerateWeekPlan: Trainingstage", () => {
     profile = baseProfile({ trainingSessions: [{ weekday: 2, startTime: "18:00", durationMin: 60, sportType: "STRENGTH" }] });
     recipes = [...recipes, ...recipesFor("PRE_WORKOUT", "pre", 3), ...recipesFor("POST_WORKOUT", "post", 3)];
 
-    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    const plans = await editableWeekPlan(MONDAY);
 
     const wednesday = plans[2];
     expect(wednesday.items.map((i) => i.slot)).toEqual(["BREAKFAST", "SNACK", "LUNCH", "PRE_WORKOUT", "POST_WORKOUT"]);
@@ -276,7 +298,7 @@ describe("getOrGenerateWeekPlan: Trainingstage", () => {
     });
     recipes = [...recipes, ...recipesFor("PRE_WORKOUT", "pre", 3), ...recipesFor("POST_WORKOUT", "post", 3)];
 
-    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    const plans = await editableWeekPlan(MONDAY);
     const trainingDays = [plans[0], plans[2], plans[4]];
 
     expect(new Set(trainingDays.map((p) => p.items.find((i) => i.slot === "PRE_WORKOUT")!.recipeId)).size).toBe(3);
@@ -289,7 +311,7 @@ describe("getOrGenerateWeekPlan: Trainingstage", () => {
     });
     recipes = [...recipes, fakeRecipe("pre1", "PRE_WORKOUT"), fakeRecipe("post1", "POST_WORKOUT")];
 
-    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    const plans = await editableWeekPlan(MONDAY);
 
     expect(plans[0].items.find((i) => i.slot === "POST_WORKOUT")!.recipeId).toBe("post1");
     expect(plans[2].items.find((i) => i.slot === "POST_WORKOUT")!.recipeId).toBe("post1");
@@ -298,26 +320,26 @@ describe("getOrGenerateWeekPlan: Trainingstage", () => {
 
 describe("Wochenverwendung gehört zu genau einem Generierungslauf", () => {
   it("wirkt nicht auf den nächsten Lauf: eine neue Woche beginnt wieder beim ersten Rezept", async () => {
-    const first = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    const first = await editableWeekPlan(MONDAY);
     store = [];
     createdDays = [];
-    const second = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    const second = await editableWeekPlan(MONDAY);
 
     expect(slotRecipeIds(second, "BREAKFAST")).toEqual(slotRecipeIds(first, "BREAKFAST"));
     expect(slotRecipeIds(second, "BREAKFAST")[0]).toBe("b1");
   });
 
   it("ist zwischen Wochen unabhängig: die Folgewoche beginnt nicht bei den Rezepten der Vorwoche", async () => {
-    await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
-    const nextWeek = await getOrGenerateWeekPlan(PROFILE_ID, "2026-09-21");
+    await editableWeekPlan(MONDAY);
+    const nextWeek = await editableWeekPlan("2026-09-21");
 
     expect(slotRecipeIds(nextWeek, "BREAKFAST")[0]).toBe("b1");
   });
 
   it("verwendet für einen Einzelaufruf ohne Übergabe eine frische Verwendung statt Zustand eines früheren Aufrufs", async () => {
-    const monday = await getOrGenerateDayPlan(PROFILE_ID, MONDAY);
+    const monday = await editableDayPlan(MONDAY);
     store = [];
-    const again = await getOrGenerateDayPlan(PROFILE_ID, MONDAY);
+    const again = await editableDayPlan(MONDAY);
 
     expect(again.items.map((i) => i.recipeId)).toEqual(monday.items.map((i) => i.recipeId));
   });
@@ -332,7 +354,7 @@ describe("unlesbare Rezeptdaten (R5D)", () => {
       ...recipes,
     ];
 
-    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    const plans = await editableWeekPlan(MONDAY);
 
     const chosen = plans.flatMap((p) => p.items.map((i) => i.recipeId));
     expect(chosen).not.toContain("kaputt-json");
@@ -346,10 +368,10 @@ describe("unlesbare Rezeptdaten (R5D)", () => {
 
 describe("bereits gespeicherte Tage", () => {
   it("bleiben unverändert und werden nicht neu erzeugt", async () => {
-    const stored = await getOrGenerateDayPlan(PROFILE_ID, "2026-09-18", new Map());
+    const stored = await editableDayPlan("2026-09-18", new Map());
     createdDays = [];
 
-    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    const plans = await editableWeekPlan(MONDAY);
 
     expect(plans[4]).toBe(stored);
     expect(createdDays).toHaveLength(6);
@@ -357,16 +379,16 @@ describe("bereits gespeicherte Tage", () => {
   });
 
   it("zählen für die Variety, auch wenn sie später in der Woche liegen als ein neu erzeugter Tag", async () => {
-    await getOrGenerateDayPlan(PROFILE_ID, "2026-09-18", new Map()); // Freitag: b1, l1, d1
-    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    await editableDayPlan("2026-09-18", new Map()); // Freitag: b1, l1, d1
+    const plans = await editableWeekPlan(MONDAY);
 
     expect(slotRecipeIds(plans, "BREAKFAST")[0]).toBe("b2"); // Montag meidet das bereits am Freitag gewählte b1
     expect(new Set(slotRecipeIds(plans, "BREAKFAST")).size).toBe(7);
   });
 
   it("fließen auch in einen einzeln erzeugten Tag ein (Dashboard-Weg ohne Wochenaufruf)", async () => {
-    const tuesday = await getOrGenerateDayPlan(PROFILE_ID, "2026-09-15", new Map());
-    const wednesday = await getOrGenerateDayPlan(PROFILE_ID, "2026-09-16");
+    const tuesday = await editableDayPlan("2026-09-15", new Map());
+    const wednesday = await editableDayPlan("2026-09-16");
 
     const tuesdayBreakfast = tuesday.items.find((i) => i.slot === "BREAKFAST")!.recipeId;
     const wednesdayBreakfast = wednesday.items.find((i) => i.slot === "BREAKFAST")!.recipeId;
@@ -374,8 +396,8 @@ describe("bereits gespeicherte Tage", () => {
   });
 
   it("zählen nicht aus einer anderen Woche", async () => {
-    await getOrGenerateDayPlan(PROFILE_ID, "2026-09-13", new Map()); // Sonntag der Vorwoche
-    const monday = await getOrGenerateDayPlan(PROFILE_ID, MONDAY);
+    await editableDayPlan("2026-09-13", new Map(), "2026-09-13"); // Sonntag der Vorwoche, an diesem Tag erzeugt
+    const monday = await editableDayPlan(MONDAY);
 
     expect(monday.items.find((i) => i.slot === "BREAKFAST")!.recipeId).toBe("b1");
   });
@@ -418,19 +440,19 @@ describe("Allergien im persönlichen Plan (Regression: 'Erdnüsse' vs. Allergen 
 
   it("Kontrolle: ohne Allergie wird das Erdnuss-Rezept gewählt", async () => {
     profile = baseProfile({ likedFoods: [{ label: "Erdnussbutter" }] });
-    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    const plans = await editableWeekPlan(MONDAY);
     expect(slotRecipeIds(plans, "LUNCH")).toContain("l-erdnuss");
   });
 
   it("Allergie 'Erdnüsse' sperrt das Rezept mit Allergen 'erdnuss' an jedem Tag der Woche", async () => {
     profile = baseProfile({ allergies: [{ label: "Erdnüsse" }], likedFoods: [{ label: "Erdnussbutter" }] });
-    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    const plans = await editableWeekPlan(MONDAY);
     expect(slotRecipeIds(plans, "LUNCH")).toEqual(Array(7).fill("l-sicher"));
   });
 
   it.each(["Erdnuss", "erdnüsse", "Erdnuss-Allergie", "Nüsse"])("sperrt auch bei der Angabe '%s'", async (label) => {
     profile = baseProfile({ allergies: [{ label }], likedFoods: [{ label: "Erdnussbutter" }] });
-    const plans = await getOrGenerateDayPlan(PROFILE_ID, MONDAY, new Map());
+    const plans = await editableDayPlan(MONDAY, new Map());
     expect(plans.items.some((i) => i.recipeId === "l-erdnuss")).toBe(false);
   });
 
@@ -441,7 +463,7 @@ describe("Allergien im persönlichen Plan (Regression: 'Erdnüsse' vs. Allergen 
       fakeRecipe("l-sicher", "LUNCH"),
     ];
     profile = baseProfile({ allergies: [{ label: "Sellerie" }], likedFoods: [{ label: "Sellerie" }] });
-    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    const plans = await editableWeekPlan(MONDAY);
     expect(slotRecipeIds(plans, "LUNCH")).toEqual(Array(7).fill("l-sicher"));
   });
 });
@@ -462,7 +484,7 @@ describe("Lieblinge und Abneigungen über die gemeinsame Food-Auflösung", () =>
     ];
     profile = baseProfile({ dislikedFoods: [{ label: "Reis" }] });
 
-    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    const plans = await editableWeekPlan(MONDAY);
 
     expect(new Set(slotRecipeIds(plans, "LUNCH"))).toEqual(new Set(["l-waffeln"]));
   });
@@ -477,7 +499,7 @@ describe("Lieblinge und Abneigungen über die gemeinsame Food-Auflösung", () =>
     recipeRows = [{ recipeId: "l-poulet", position: 0, foodId: "food-haehnchenbrust", displayName: "Poulet" }];
     profile = baseProfile({ likedFoods: [{ label: "Hähnchen" }] });
 
-    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    const plans = await editableWeekPlan(MONDAY);
 
     // +0.5 (Lieblingsfood) bleibt vor dem Wiederholungsabschlag von höchstens 0.3.
     expect(slotRecipeIds(plans, "LUNCH")).toEqual(Array(7).fill("l-poulet"));
@@ -488,9 +510,107 @@ describe("Lieblinge und Abneigungen über die gemeinsame Food-Auflösung", () =>
     recipes = [...recipes.filter((r) => !r.id.startsWith("l")), fakeRecipe("l-a", "LUNCH"), fakeRecipe("l-b", "LUNCH", { ingredients: JSON.stringify(["100 g Kichererbsen"]) })];
     profile = baseProfile({ likedFoods: [{ label: "Trüffel" }] });
 
-    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY);
+    const plans = await editableWeekPlan(MONDAY);
 
     // Beide Rezepte sind gleich bewertet: sie wechseln sich ab, keines wird wegen "Trüffel" bevorzugt.
     expect(slotRecipeIds(plans, "LUNCH").slice(0, 4)).toEqual(["l-a", "l-b", "l-a", "l-b"]);
+  });
+});
+
+describe("Bearbeitungsgrenze (R5E): gestern und früher historisch, heute und Zukunft bearbeitbar", () => {
+  // Die In-Memory-Nachbildung kennt kein update/delete: jeder Versuch, einen Tag zu überschreiben, würde werfen.
+  const THURSDAY: CalendarDate = "2026-09-17";
+
+  it("gibt einen gespeicherten vergangenen Tag unverändert zurück, auch wenn heute andere Rezepte gewählt würden", async () => {
+    const stored = await getOrGenerateDayPlan(PROFILE_ID, "2026-09-16", "2026-09-16"); // am Mittwoch selbst erzeugt
+    const storedRecipeIds = stored!.items.map((i) => i.recipeId);
+    createdDays = [];
+    recipes = [...recipesFor("BREAKFAST", "neu-b", 3), ...recipesFor("LUNCH", "neu-l", 3), ...recipesFor("DINNER", "neu-d", 3)];
+
+    const later = await getOrGenerateDayPlan(PROFILE_ID, "2026-09-16", THURSDAY);
+
+    expect(later).toBe(stored);
+    expect(later!.items.map((i) => i.recipeId)).toEqual(storedRecipeIds);
+    expect(createdDays).toEqual([]);
+    expect(store).toHaveLength(1);
+  });
+
+  it.each([
+    ["gestern", "2026-09-16"],
+    ["weit in der Vergangenheit", "2020-01-01"],
+  ] as const)("erzeugt einen fehlenden vergangenen Tag (%s) nicht nachträglich", async (_label, day) => {
+    expect(await getOrGenerateDayPlan(PROFILE_ID, day, THURSDAY)).toBeNull();
+    expect(createdDays).toEqual([]);
+    expect(store).toEqual([]);
+  });
+
+  it("erzeugt heute weiterhin", async () => {
+    const plan = await getOrGenerateDayPlan(PROFILE_ID, THURSDAY, THURSDAY);
+
+    expect(plan?.items.length).toBeGreaterThan(0);
+    expect(createdDays).toEqual([THURSDAY]);
+  });
+
+  it("erzeugt einen künftigen Tag weiterhin", async () => {
+    const plan = await getOrGenerateDayPlan(PROFILE_ID, "2026-09-18", THURSDAY);
+
+    expect(plan?.items.length).toBeGreaterThan(0);
+    expect(createdDays).toEqual(["2026-09-18"]);
+  });
+
+  it("die Woche erzeugt nur heute und die Zukunft; fehlende vergangene Tage bleiben null", async () => {
+    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY, THURSDAY);
+
+    expect(plans.slice(0, 3)).toEqual([null, null, null]);
+    expect(plans.slice(3).every((plan) => plan !== null && plan.items.length > 0)).toBe(true);
+    expect(createdDays).toEqual(["2026-09-17", "2026-09-18", "2026-09-19", "2026-09-20"]);
+  });
+
+  it("die Woche liefert einen gespeicherten vergangenen Tag unverändert mit, ohne die Lücken daneben zu füllen", async () => {
+    const tuesday = await getOrGenerateDayPlan(PROFILE_ID, "2026-09-15", "2026-09-15");
+    createdDays = [];
+
+    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY, THURSDAY);
+
+    expect(plans[0]).toBeNull();
+    expect(plans[1]).toBe(tuesday);
+    expect(plans[2]).toBeNull();
+    expect(createdDays).toEqual(["2026-09-17", "2026-09-18", "2026-09-19", "2026-09-20"]);
+  });
+
+  it("zählt einen gespeicherten vergangenen Tag weiter für die Abwechslung der neu erzeugten Tage", async () => {
+    const tuesday = await getOrGenerateDayPlan(PROFILE_ID, "2026-09-15", "2026-09-15");
+    const tuesdayBreakfast = tuesday!.items.find((i) => i.slot === "BREAKFAST")!.recipeId;
+
+    const plans = await getOrGenerateWeekPlan(PROFILE_ID, MONDAY, THURSDAY);
+
+    expect(plans[3]!.items.find((i) => i.slot === "BREAKFAST")!.recipeId).not.toBe(tuesdayBreakfast);
+  });
+});
+
+describe("Rezept-Snapshot (R5E)", () => {
+  it("speichert je Mahlzeit Name und Nährwerte je Portion des gewählten Rezepts, unskaliert neben dem Portionsfaktor", async () => {
+    recipes = [
+      fakeRecipe("frühstück", "BREAKFAST", { name: "Porridge", kcal: 420, proteinG: 22.5, carbsG: 60, fatG: 9.5 }),
+      fakeRecipe("mittag", "LUNCH", { name: "Linsen-Curry", kcal: 610, proteinG: 28, carbsG: 70, fatG: 19 }),
+      fakeRecipe("abend", "DINNER", { name: "Lachs mit Reis", kcal: 680, proteinG: 41, carbsG: 62, fatG: 24 }),
+    ];
+
+    await editableDayPlan(MONDAY);
+
+    const storedItems = store[0].items;
+    expect(storedItems.length).toBeGreaterThan(0);
+    for (const stored of storedItems) {
+      const recipe = recipes.find((r) => r.id === stored.recipeId)!;
+      expect(stored).toMatchObject({
+        recipeName: recipe.name,
+        recipeKcal: recipe.kcal,
+        recipeProteinG: recipe.proteinG,
+        recipeCarbsG: recipe.carbsG,
+        recipeFatG: recipe.fatG,
+      });
+      // Die Menge steht allein im Portionsfaktor; der Snapshot bleibt der Basiswert je Portion.
+      expect(stored.portionMultiplier).toBeGreaterThan(0);
+    }
   });
 });

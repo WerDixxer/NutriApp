@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { toDbDate } from "@/lib/calendarDate";
 import { databaseFixtures } from "@/test/databaseFixtures";
 import { pushSchema, removeIsolatedDatabase } from "@/test/isolatedDatabase";
 
@@ -22,7 +23,7 @@ const session = vi.hoisted(() => ({ userId: null as string | null }));
 vi.mock("@/lib/session", () => ({ getApiUserId: async () => session.userId }));
 
 const { prisma } = await import("@/lib/db");
-const { DELETE } = await import("./route");
+const { DELETE, POST } = await import("./route");
 const { createPerson, createRecipe, createHousehold, planInDayPlan, planInHouseholdPlan, clearFixtureData } = databaseFixtures(prisma);
 
 const RECIPE_IN_USE_MESSAGE = "Das Rezept kann nicht gelöscht werden, weil es noch in einem Essens- oder Wochenplan verwendet wird.";
@@ -48,6 +49,52 @@ async function signedInPerson() {
 function deleteRequest(recipeId: string): Request {
   return new Request(`http://localhost/api/recipes?id=${recipeId}`, { method: "DELETE" });
 }
+
+function createRequest(): Request {
+  const body = {
+    name: "Linsen-Curry",
+    kcal: 520,
+    proteinG: 24,
+    carbsG: 60,
+    fatG: 14,
+    prepTimeMin: 30,
+    servings: 2,
+    mealSlots: ["DINNER"],
+    dietTypes: ["VEGAN"],
+    ingredients: ["200 g Linsen"],
+    instructions: ["Linsen kochen."],
+  };
+  return new Request("http://localhost/api/recipes", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+}
+
+describe("POST /api/recipes (R5E)", () => {
+  it("legt das Rezept an und lässt bestehende Tagespläne samt Einträgen unverändert", async () => {
+    const { profile } = await signedInPerson();
+    const recipe = await createRecipe("Reis-Bowl");
+    await planInDayPlan(profile.id, recipe.id);
+    await prisma.mealPlanDay.create({
+      data: {
+        profileId: profile.id,
+        date: toDbDate("2026-10-05"),
+        targetKcal: 2000,
+        targetProteinG: 110,
+        targetCarbsG: 230,
+        targetFatG: 70,
+        items: { create: [{ slot: "DINNER", time: "19:00", recipeId: recipe.id }] },
+      },
+    });
+    const storedPlans = () =>
+      prisma.mealPlanDay.findMany({ where: { profileId: profile.id }, include: { items: true }, orderBy: { date: "asc" } });
+    const before = await storedPlans();
+
+    const res = await POST(createRequest());
+
+    expect(res.status).toBe(200);
+    expect(await prisma.recipe.count({ where: { ownerProfileId: profile.id, name: "Linsen-Curry" } })).toBe(1);
+    expect(before).toHaveLength(2);
+    expect(await storedPlans()).toEqual(before);
+  });
+});
 
 describe("DELETE /api/recipes (F-09)", () => {
   it("löscht ein eigenes Rezept, das in keinem Plan steckt", async () => {

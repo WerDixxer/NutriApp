@@ -511,6 +511,16 @@ model MealPlanItem {
 
   recipe    Recipe @relation(fields: [recipeId], references: [id])
   recipeId  String
+
+  // Snapshot (R5E): Name und Nährwerte des Rezepts zum Planungszeitpunkt, je Portion des Basisrezepts
+  // (wie Recipe.kcal usw.). Geplant = Wert × portionMultiplier; die Menge steht nur in portionMultiplier.
+  // Immer gemeinsam geschrieben; NULL = Eintrag von vor den Snapshots, dann gilt das aktuelle Rezept
+  // (siehe src/lib/recipeAsPlanned.ts). Zutaten und Zubereitung kommen weiterhin live aus dem Rezept.
+  recipeName     String?
+  recipeKcal     Int?
+  recipeProteinG Float?
+  recipeCarbsG   Float?
+  recipeFatG     Float?
 }
 
 // ---- Pantry (Kapitel 6) ----
@@ -787,13 +797,15 @@ model MealPlan {
 // gespeichert (statt live aus der aktuellen Mitgliederliste abgeleitet),
 // damit ein Plan nachvollziehbar bleibt, auch wenn sich die Haushalts-
 // Mitgliedschaft später ändert (siehe Kapitel 9: Mitglied kann entfernt
-// werden/den Haushalt verlassen).
+// werden/den Haushalt verlassen). Verlässt ein Mitglied den Haushalt (oder
+// wird sein Konto gelöscht), bleibt die Zeile erhalten: `householdMemberId`
+// wird NULL und steht für ein ehemaliges Mitglied (R5E), wie bei MealPlanMeal.
 model MealPlanMember {
-  id                String          @id @default(cuid())
-  mealPlan          MealPlan        @relation(fields: [mealPlanId], references: [id], onDelete: Cascade)
+  id                String           @id @default(cuid())
+  mealPlan          MealPlan         @relation(fields: [mealPlanId], references: [id], onDelete: Cascade)
   mealPlanId        String
-  householdMember   HouseholdMember @relation(fields: [householdMemberId], references: [id], onDelete: Cascade)
-  householdMemberId String
+  householdMember   HouseholdMember? @relation(fields: [householdMemberId], references: [id], onDelete: SetNull)
+  householdMemberId String?
 
   @@unique([mealPlanId, householdMemberId])
 }
@@ -822,6 +834,14 @@ model MealPlanMeal {
   // JSON-Array NUR tatsächlich berechneter Begründungen (siehe mealPlanner/explain.ts),
   // z.B. ["Verwendet deinen Spinat aus dem Vorrat."]. Nie erfundene Texte.
   reasons           String @default("[]")
+
+  // Snapshot (R5E), gleiche Bedeutung wie bei MealPlanItem: Rezeptwerte zum Planungszeitpunkt je Portion
+  // des Basisrezepts, Menge nur in portionMultiplier, NULL = Eintrag von vor den Snapshots.
+  recipeName     String?
+  recipeKcal     Int?
+  recipeProteinG Float?
+  recipeCarbsG   Float?
+  recipeFatG     Float?
 
   createdAt DateTime @default(now())
 }

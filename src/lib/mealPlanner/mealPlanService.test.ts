@@ -46,7 +46,20 @@ describe("createMealPlan: verschachtelte, atomare Persistierung", () => {
       startDate: "2026-09-21",
       endDate: "2026-09-27",
       householdMemberIds: ["member-1", "member-2"],
-      meals: [{ date: "2026-09-21", slot: "LUNCH", recipeId: "recipe-1", recipeName: "X", portionMultiplier: 1.2, reasons: ["Test-Grund"] }],
+      meals: [
+        {
+          date: "2026-09-21",
+          slot: "LUNCH",
+          recipeId: "recipe-1",
+          recipeName: "X",
+          recipeKcal: 500,
+          recipeProteinG: 40,
+          recipeCarbsG: 55,
+          recipeFatG: 12.5,
+          portionMultiplier: 1.2,
+          reasons: ["Test-Grund"],
+        },
+      ],
       status: "ACTIVE",
     });
     expect(mealPlanCreate).toHaveBeenCalledTimes(1);
@@ -55,6 +68,8 @@ describe("createMealPlan: verschachtelte, atomare Persistierung", () => {
     expect(createCall.data.members.create).toEqual([{ householdMemberId: "member-1" }, { householdMemberId: "member-2" }]);
     expect(createCall.data.meals.create[0].reasons).toBe(JSON.stringify(["Test-Grund"]));
     expect(createCall.data.meals.create[0].portionMultiplier).toBe(1.2);
+    // Rezept-Snapshot (R5E): Basiswerte je Portion, die Menge steht allein im portionMultiplier.
+    expect(createCall.data.meals.create[0]).toMatchObject({ recipeName: "X", recipeKcal: 500, recipeProteinG: 40, recipeCarbsG: 55, recipeFatG: 12.5 });
     // Kalendertage werden als UTC-Mitternacht gespeichert, das Planende ist der letzte Tag selbst (F-10).
     expect(createCall.data.startDate).toEqual(new Date("2026-09-21T00:00:00.000Z"));
     expect(createCall.data.endDate).toEqual(new Date("2026-09-27T00:00:00.000Z"));

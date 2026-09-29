@@ -28,7 +28,18 @@ export function validateGeneratedPlan(
 
   if (context.members.length === 0) {
     errors.push({
-      meal: { date: input.startDate, slot: input.slots[0] ?? "BREAKFAST", recipeId: "", recipeName: "", portionMultiplier: 0, reasons: [] },
+      meal: {
+        date: input.startDate,
+        slot: input.slots[0] ?? "BREAKFAST",
+        recipeId: "",
+        recipeName: "",
+        recipeKcal: 0,
+        recipeProteinG: 0,
+        recipeCarbsG: 0,
+        recipeFatG: 0,
+        portionMultiplier: 0,
+        reasons: [],
+      },
       message: "Kein gültiges Haushaltsmitglied für diesen Plan.",
     });
   }

@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { fromDbDate, todayForUser } from "@/lib/calendarDate";
+import { fromDbDate, todayForUser, type CalendarDate } from "@/lib/calendarDate";
 import { databaseFixtures, PLAN_DATE } from "./databaseFixtures";
 import { pushSchema, removeIsolatedDatabase } from "./isolatedDatabase";
 
@@ -54,6 +54,13 @@ beforeEach(async () => {
   signIn.mockClear();
 });
 
+/** Tagesplan, wie ihn ein Request an genau diesem Kalendertag anfordert (heute ist bearbeitbar, also nie null). */
+async function dayPlanRequestedOn(profileId: string, day: CalendarDate) {
+  const plan = await getOrGenerateDayPlan(profileId, day, day);
+  if (!plan) throw new Error(`Der Tagesplan für ${day} muss am selben Tag erzeugt werden.`);
+  return plan;
+}
+
 function form(fields: Record<string, string>): FormData {
   const data = new FormData();
   for (const [key, value] of Object.entries(fields)) data.set(key, value);
@@ -78,7 +85,7 @@ describe("Tagesplan: zwei gleichzeitige Aufrufe für denselben Tag (R4-04)", () 
     const { profile } = await createPerson("A");
     await createRecipe("Reis-Bowl");
 
-    const [first, second] = await Promise.all([getOrGenerateDayPlan(profile.id, PLAN_DATE), getOrGenerateDayPlan(profile.id, PLAN_DATE)]);
+    const [first, second] = await Promise.all([dayPlanRequestedOn(profile.id, PLAN_DATE), dayPlanRequestedOn(profile.id, PLAN_DATE)]);
 
     expect(second.id).toBe(first.id);
     expect(first.items.length).toBeGreaterThan(0);
@@ -93,7 +100,7 @@ describe("Tagesplan: zwei gleichzeitige Aufrufe für denselben Tag (R4-04)", () 
     const at0030 = todayForUser(new Date("2026-09-26T00:30:00+02:00"));
     const at0130 = todayForUser(new Date("2026-09-26T01:30:00+02:00"));
 
-    const [first, second] = await Promise.all([getOrGenerateDayPlan(profile.id, at0030), getOrGenerateDayPlan(profile.id, at0130)]);
+    const [first, second] = await Promise.all([dayPlanRequestedOn(profile.id, at0030), dayPlanRequestedOn(profile.id, at0130)]);
 
     expect(second.id).toBe(first.id);
     expect(fromDbDate(first.date)).toBe("2026-09-26");
@@ -106,7 +113,7 @@ describe("Tagesplan: zwei gleichzeitige Aufrufe für denselben Tag (R4-04)", () 
     const lateEvening = todayForUser(new Date("2026-09-25T23:30:00+02:00"));
     const afterMidnight = todayForUser(new Date("2026-09-26T00:30:00+02:00"));
 
-    const [dayA, dayB] = await Promise.all([getOrGenerateDayPlan(profile.id, lateEvening), getOrGenerateDayPlan(profile.id, afterMidnight)]);
+    const [dayA, dayB] = await Promise.all([dayPlanRequestedOn(profile.id, lateEvening), dayPlanRequestedOn(profile.id, afterMidnight)]);
 
     expect(dayA.id).not.toBe(dayB.id);
     expect([fromDbDate(dayA.date), fromDbDate(dayB.date)]).toEqual(["2026-09-25", "2026-09-26"]);
@@ -120,11 +127,12 @@ describe("Tagesplan: zwei gleichzeitige Aufrufe für denselben Tag (R4-04)", () 
     await createRecipe("Reis-Bowl");
 
     const [firstWeek, secondWeek] = await Promise.all([
-      getOrGenerateWeekPlan(profile.id, MONDAY_OF_PLAN_WEEK),
-      getOrGenerateWeekPlan(profile.id, MONDAY_OF_PLAN_WEEK),
+      getOrGenerateWeekPlan(profile.id, MONDAY_OF_PLAN_WEEK, MONDAY_OF_PLAN_WEEK),
+      getOrGenerateWeekPlan(profile.id, MONDAY_OF_PLAN_WEEK, MONDAY_OF_PLAN_WEEK),
     ]);
 
-    expect(secondWeek.map((day) => day.id)).toEqual(firstWeek.map((day) => day.id));
+    expect(firstWeek.every((day) => day !== null)).toBe(true);
+    expect(secondWeek.map((day) => day?.id)).toEqual(firstWeek.map((day) => day?.id));
     expect(await prisma.mealPlanDay.count({ where: { profileId: profile.id } })).toBe(7);
   });
 });

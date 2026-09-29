@@ -1,6 +1,7 @@
 import { requireSessionUserId } from "@/lib/session";
 import { getCurrentHouseholdContextWithMembers } from "@/lib/household/context";
 import { getMealPlan, listMealPlans } from "@/lib/mealPlanner/mealPlanService";
+import { recipeAsPlanned } from "@/lib/recipeAsPlanned";
 import { readJsonColumn } from "@/lib/validation/jsonColumn";
 import { storedStringListSchema } from "@/lib/validation/jsonColumnSchemas";
 import { SectionHeader } from "@/components/ui/SectionHeader";
@@ -49,22 +50,25 @@ export default async function MealPlansPage() {
         status: detail.status,
         members: detail.members.map((m) => ({
           householdMemberId: m.householdMemberId,
-          name: m.householdMember.user.name,
+          name: m.householdMember?.user.name ?? null,
         })),
-        meals: detail.meals.map((meal) => ({
-          id: meal.id,
-          date: meal.date.toISOString(),
-          // MealPlanMeal.slot ist immer einer der vier planbaren Slots (siehe mealPlanner/plannerEngine.ts),
-          // MealSlot als DB-Enum trägt zusätzlich PRE_WORKOUT/POST_WORKOUT (nur vom Single-Profile-Planner genutzt).
-          slot: meal.slot as MealPlanMealView["slot"],
-          recipeId: meal.recipeId,
-          recipeName: meal.recipe.name,
-          imageQuery: meal.recipe.imageQuery,
-          kcal: Math.round(meal.recipe.kcal * meal.portionMultiplier),
-          proteinG: Math.round(meal.recipe.proteinG * meal.portionMultiplier),
-          portionMultiplier: meal.portionMultiplier,
-          reasons: readJsonColumn({ model: "MealPlanMeal", id: meal.id, column: "reasons" }, meal.reasons, storedStringListSchema),
-        })),
+        meals: detail.meals.map((meal) => {
+          const planned = recipeAsPlanned(meal);
+          return {
+            id: meal.id,
+            date: meal.date.toISOString(),
+            // MealPlanMeal.slot ist immer einer der vier planbaren Slots (siehe mealPlanner/plannerEngine.ts),
+            // MealSlot als DB-Enum trägt zusätzlich PRE_WORKOUT/POST_WORKOUT (nur vom Single-Profile-Planner genutzt).
+            slot: meal.slot as MealPlanMealView["slot"],
+            recipeId: meal.recipeId,
+            recipeName: planned.name,
+            imageQuery: meal.recipe.imageQuery,
+            kcal: Math.round(planned.kcal * meal.portionMultiplier),
+            proteinG: Math.round(planned.proteinG * meal.portionMultiplier),
+            portionMultiplier: meal.portionMultiplier,
+            reasons: readJsonColumn({ model: "MealPlanMeal", id: meal.id, column: "reasons" }, meal.reasons, storedStringListSchema),
+          };
+        }),
       }
     : null;
 

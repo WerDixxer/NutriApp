@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { getApiHouseholdId } from "@/lib/session";
+import { todayForUser } from "@/lib/calendarDate";
 import { prisma } from "@/lib/db";
 import { generateAndSaveMealPlan } from "@/lib/mealPlanner/generate";
+import { isHistoricalPlanDay } from "@/lib/planDayBoundary";
 import { generateMealPlanSchema } from "@/lib/validation/mealPlan";
 import { firstZodIssue } from "@/lib/validation/zodError";
 import { invalidJsonBodyResponse, readJsonBody } from "@/lib/validation/jsonBody";
@@ -12,6 +14,10 @@ import { invalidJsonBodyResponse, readJsonBody } from "@/lib/validation/jsonBody
  * angegeben) explizit gegen die tatsächliche Mitgliederliste DIESES
  * Haushalts prüfen (nie vertrauen), dann deterministisch planen und
  * speichern.
+ *
+ * Ein Plan darf nicht in der Vergangenheit beginnen (R5E): "heute" bestimmt der Server über
+ * `todayForUser`, nie das Datum des Browsers. Derselbe Zeitpunkt geht an die Planung, damit
+ * Prüfung und Planung denselben Kalendertag als heute sehen.
  */
 export async function POST(request: Request) {
   const householdId = await getApiHouseholdId();
@@ -24,6 +30,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: firstZodIssue(parsed.error) }, { status: 400 });
   }
   const input = parsed.data;
+
+  const now = new Date();
+  if (isHistoricalPlanDay(input.startDate, todayForUser(now))) {
+    return NextResponse.json({ error: "Ein Essensplan kann nicht in der Vergangenheit beginnen." }, { status: 400 });
+  }
 
   let householdMemberIds: string[] | null = null;
   if (input.memberIds && input.memberIds.length > 0) {
@@ -39,14 +50,17 @@ export async function POST(request: Request) {
     householdMemberIds = input.memberIds;
   }
 
-  const result = await generateAndSaveMealPlan({
-    householdId,
-    householdMemberIds,
-    startDate: input.startDate,
-    days: input.days,
-    slots: input.mealTypes,
-    name: input.name,
-  });
+  const result = await generateAndSaveMealPlan(
+    {
+      householdId,
+      householdMemberIds,
+      startDate: input.startDate,
+      days: input.days,
+      slots: input.mealTypes,
+      name: input.name,
+    },
+    now,
+  );
 
   if (result.status === "NO_VALID_PLAN") {
     return NextResponse.json(

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const getApiHouseholdId = vi.fn();
 const generateAndSaveMealPlan = vi.fn();
@@ -18,10 +18,22 @@ vi.mock("@/lib/db", () => ({
 
 const { POST } = await import("./route");
 
+/** Serveruhr der Tests: Montag, 21.09.2026, 10:00 Uhr in Berlin. "Heute" ist damit der 21.09. */
+const SERVER_NOW = new Date("2026-09-21T10:00:00+02:00");
 const validBody = { startDate: "2026-09-21", days: 7, mealTypes: ["BREAKFAST", "LUNCH", "DINNER"] };
+
+function generateRequest(body: unknown): Request {
+  return new Request("http://x", { method: "POST", body: JSON.stringify(body) });
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(SERVER_NOW);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("POST /api/meal-plans/generate: Authorization und Validierung", () => {
@@ -65,7 +77,7 @@ describe("POST /api/meal-plans/generate: memberIds werden serverseitig gegen den
     const res = await POST(new Request("http://x", { method: "POST", body: JSON.stringify(validBody) }));
     expect(res.status).toBe(200);
     expect(householdMemberFindMany).not.toHaveBeenCalled();
-    expect(generateAndSaveMealPlan).toHaveBeenCalledWith(expect.objectContaining({ householdMemberIds: null }));
+    expect(generateAndSaveMealPlan).toHaveBeenCalledWith(expect.objectContaining({ householdMemberIds: null }), expect.any(Date));
   });
 });
 
@@ -84,6 +96,52 @@ describe("POST /api/meal-plans/generate: Ergebnis-Status", () => {
     getApiHouseholdId.mockResolvedValueOnce("household-A");
     generateAndSaveMealPlan.mockResolvedValueOnce({ status: "SUCCESS", plan: { id: "plan-1" }, unmetSlots: [] });
     await POST(new Request("http://x", { method: "POST", body: JSON.stringify({ ...validBody, householdId: "household-FOREIGN" }) }));
-    expect(generateAndSaveMealPlan).toHaveBeenCalledWith(expect.objectContaining({ householdId: "household-A" }));
+    expect(generateAndSaveMealPlan).toHaveBeenCalledWith(expect.objectContaining({ householdId: "household-A" }), expect.any(Date));
+  });
+});
+
+describe("POST /api/meal-plans/generate: Start nicht in der Vergangenheit (R5E)", () => {
+  it("lehnt einen Start vor heute mit 400 ab, ohne zu planen oder den Haushalt abzufragen", async () => {
+    getApiHouseholdId.mockResolvedValueOnce("household-A");
+    const res = await POST(generateRequest({ ...validBody, startDate: "2026-09-20", memberIds: ["member-1"] }));
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Ein Essensplan kann nicht in der Vergangenheit beginnen." });
+    expect(generateAndSaveMealPlan).not.toHaveBeenCalled();
+    expect(householdMemberFindMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["heute", "2026-09-21"],
+    ["in der Zukunft", "2026-09-25"],
+  ])("erlaubt einen Start %s und plant mit demselben Zeitpunkt, mit dem geprüft wurde", async (_label, startDate) => {
+    getApiHouseholdId.mockResolvedValueOnce("household-A");
+    generateAndSaveMealPlan.mockResolvedValueOnce({ status: "SUCCESS", plan: { id: "plan-1" }, unmetSlots: [] });
+
+    const res = await POST(generateRequest({ ...validBody, startDate }));
+
+    expect(res.status).toBe(200);
+    expect(generateAndSaveMealPlan).toHaveBeenCalledWith(expect.objectContaining({ startDate }), SERVER_NOW);
+  });
+
+  it("entscheidet nach dem deutschen Kalendertag des Servers, nicht nach dem Datum des Browsers", async () => {
+    // 00:30 Uhr am 22.09. in Berlin: Ein Browser, der nach UTC rechnet, hält noch den 21.09. für heute.
+    vi.setSystemTime(new Date("2026-09-22T00:30:00+02:00"));
+    getApiHouseholdId.mockResolvedValueOnce("household-A");
+
+    const res = await POST(generateRequest({ ...validBody, startDate: "2026-09-21" }));
+
+    expect(res.status).toBe(400);
+    expect(generateAndSaveMealPlan).not.toHaveBeenCalled();
+  });
+
+  it("erlaubt kurz vor Mitternacht in Berlin noch den laufenden Tag", async () => {
+    vi.setSystemTime(new Date("2026-09-21T23:30:00+02:00"));
+    getApiHouseholdId.mockResolvedValueOnce("household-A");
+    generateAndSaveMealPlan.mockResolvedValueOnce({ status: "SUCCESS", plan: { id: "plan-1" }, unmetSlots: [] });
+
+    const res = await POST(generateRequest({ ...validBody, startDate: "2026-09-21" }));
+
+    expect(res.status).toBe(200);
   });
 });

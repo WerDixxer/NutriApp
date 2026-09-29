@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { toDbDate } from "@/lib/calendarDate";
 import { pushSchema, removeIsolatedDatabase } from "@/test/isolatedDatabase";
 
 /**
@@ -229,9 +230,52 @@ describe("POST /api/profile (F-05)", () => {
       dislikedFoods: [],
       priorities: [],
       trainingSessions: [{ weekday: 3, startTime: "07:00", durationMin: 45 }],
-      mealPlanDays: 0,
+      mealPlanDays: 1, // R5E: Speichern löscht keine Tagespläne mehr
       profileTagRows: 3,
     });
+  });
+
+  it("lässt vergangene und spätere Tagespläne samt Einträgen unverändert (R5E)", async () => {
+    const { profile } = await createUserWithProfile();
+    const recipe = await prisma.recipe.create({
+      data: {
+        name: "Reis-Bowl",
+        description: "",
+        kcal: 450,
+        proteinG: 25,
+        carbsG: 50,
+        fatG: 12,
+        prepTimeMin: 15,
+        mealSlots: '["LUNCH"]',
+        dietTypes: '["VEGETARIAN"]',
+        allergens: "[]",
+        ingredients: '["150 g Reis"]',
+        instructions: '["Reis kochen."]',
+      },
+    });
+    // Ob ein Tag vergangen ist, spielt hier keine Rolle: Speichern darf gar keinen Tagesplan löschen oder ändern.
+    for (const date of ["2026-09-20", "2026-10-05"] as const) {
+      await prisma.mealPlanDay.create({
+        data: {
+          profileId: profile.id,
+          date: toDbDate(date),
+          targetKcal: 1800,
+          targetProteinG: 100,
+          targetCarbsG: 200,
+          targetFatG: 60,
+          items: { create: [{ slot: "LUNCH", time: "12:30", recipeId: recipe.id, portionMultiplier: 1.2 }] },
+        },
+      });
+    }
+    const storedPlans = () =>
+      prisma.mealPlanDay.findMany({ where: { profileId: profile.id }, include: { items: true }, orderBy: { date: "asc" } });
+    const before = await storedPlans();
+
+    const res = await POST(postRequest(updatePayload({ allergies: ["Reis"], weightKg: 70 })));
+
+    expect(res.status).toBe(200);
+    expect(before).toHaveLength(3);
+    expect(await storedPlans()).toEqual(before);
   });
 
   it("ein Fehler mitten im Update hinterlässt keinen halben Zustand: Profil, Allergien, Tags und Pläne bleiben unverändert", async () => {
@@ -293,5 +337,128 @@ describe("POST /api/profile: Request-Body (F-19)", () => {
     const res = await POST(postRequest({ foo: "bar" }));
     expect(res.status).toBe(400);
     expect((await res.json()).error).not.toContain("kein gültiges JSON");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R5E-3: Profil speichern meldet, ob heutige/künftige Pläne angepasst werden sollten
+// ---------------------------------------------------------------------------
+
+describe("POST /api/profile: Hinweis auf Plananpassung (R5E-3)", () => {
+  /** Serveruhr: 10.10.2026, 10:00 Uhr in Berlin. Der Tagesplan aus createUserWithProfile (24.09.) ist damit historisch. */
+  const SERVER_NOW = new Date("2026-10-10T10:00:00+02:00");
+
+  /** Dieselben planrelevanten Werte wie in createUserWithProfile. */
+  function unchangedPlanPayload(overrides: Record<string, unknown> = {}) {
+    return {
+      age: 34,
+      sex: "FEMALE",
+      heightCm: 168,
+      weightKg: 62,
+      activityLevel: "MODERATE",
+      goal: "MAINTAIN",
+      goalRateKgPerWeek: 0.5,
+      sportType: "STRENGTH",
+      dietType: "VEGETARIAN",
+      likedFoods: ["Skyr"],
+      dislikedFoods: ["Paprika"],
+      allergies: ["Erdnüsse"],
+      priorities: ["schnell"],
+      trainingSessions: [{ weekday: 1, startTime: "18:00", durationMin: 60, sportType: "STRENGTH", intensity: 3 }],
+      ...overrides,
+    };
+  }
+
+  async function storeDayPlan(profileId: string, day: "2026-10-10" | "2026-10-11" | "2026-10-12") {
+    return prisma.mealPlanDay.create({
+      data: { profileId, date: toDbDate(day), targetKcal: 2000, targetProteinG: 110, targetCarbsG: 230, targetFatG: 70 },
+    });
+  }
+
+  function storedPlans(profileId: string) {
+    return prisma.mealPlanDay.findMany({ where: { profileId }, include: { items: true }, orderBy: { date: "asc" } });
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(SERVER_NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each([
+    ["heute", "2026-10-10"],
+    ["ein künftiger Tag", "2026-10-12"],
+  ] as const)("planrelevante Änderung und gespeicherter bearbeitbarer Tag (%s): needed true, Pläne unverändert", async (_label, day) => {
+    const { profile } = await createUserWithProfile();
+    await storeDayPlan(profile.id, day);
+    const before = await storedPlans(profile.id);
+
+    const res = await POST(postRequest(unchangedPlanPayload({ allergies: ["Erdnüsse", "Milch"] })));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ profileId: profile.id, planAdaptation: { needed: true } });
+    expect(await storedPlans(profile.id)).toEqual(before);
+  });
+
+  it.each([
+    ["Ernährungsform", { dietType: "VEGAN" }],
+    ["Gewicht (Tagesziel)", { weightKg: 64 }],
+    ["Abneigung", { dislikedFoods: ["Paprika", "Pilze"] }],
+    ["Trainingszeit", { trainingSessions: [{ weekday: 1, startTime: "07:00", durationMin: 60, sportType: "STRENGTH", intensity: 3 }] }],
+  ])("fragt auch bei geänderter %s", async (_label, change) => {
+    const { profile } = await createUserWithProfile();
+    await storeDayPlan(profile.id, "2026-10-12");
+
+    const res = await POST(postRequest(unchangedPlanPayload(change)));
+
+    expect((await res.json()).planAdaptation).toEqual({ needed: true });
+  });
+
+  it("fragt nicht, wenn es nur historische Tagespläne gibt", async () => {
+    const { profile } = await createUserWithProfile();
+    const before = await storedPlans(profile.id);
+
+    const res = await POST(postRequest(unchangedPlanPayload({ dietType: "VEGAN" })));
+
+    expect((await res.json()).planAdaptation).toEqual({ needed: false });
+    expect(await storedPlans(profile.id)).toEqual(before);
+  });
+
+  it("richtet sich nach dem deutschen Kalendertag: um 00:30 Uhr ist der Vortag historisch, obwohl er in UTC noch läuft", async () => {
+    const { profile } = await createUserWithProfile();
+    await storeDayPlan(profile.id, "2026-10-11");
+    vi.setSystemTime(new Date("2026-10-12T00:30:00+02:00"));
+
+    const res = await POST(postRequest(unchangedPlanPayload({ dietType: "VEGAN" })));
+
+    expect((await res.json()).planAdaptation).toEqual({ needed: false });
+  });
+
+  it.each([
+    ["nur Prioritäten", { priorities: ["günstig"] }],
+    ["nur Trainingsintensität", { trainingSessions: [{ weekday: 1, startTime: "18:00", durationMin: 60, sportType: "STRENGTH", intensity: 5 }] }],
+    ["Listen nur umsortiert bzw. anders geschrieben", { allergies: ["ERDNÜSSE"], likedFoods: ["skyr"] }],
+    ["gar nichts", {}],
+  ])("fragt nicht bei Änderungen, die den Plan nicht beeinflussen: %s", async (_label, change) => {
+    const { profile } = await createUserWithProfile();
+    await storeDayPlan(profile.id, "2026-10-12");
+
+    const res = await POST(postRequest(unchangedPlanPayload(change)));
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).planAdaptation).toEqual({ needed: false });
+  });
+
+  it("fragt beim ersten Anlegen des Profils nicht", async () => {
+    const user = await createUser();
+    session.userId = user.id;
+
+    const res = await POST(postRequest(unchangedPlanPayload()));
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).planAdaptation).toEqual({ needed: false });
   });
 });

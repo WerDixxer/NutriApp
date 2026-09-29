@@ -2,11 +2,13 @@ import type { MealSlot, Prisma } from "@prisma/client";
 import { addDays, fromDbDate, startOfWeek, toDbDate, weekdayIndex, type CalendarDate } from "./calendarDate";
 import { prisma } from "./db";
 import { isUniqueConstraintError } from "./prismaErrors";
+import { isHistoricalPlanDay } from "./planDayBoundary";
 import { calcFullTargets } from "./nutrition";
 import { matchesAllergen } from "./foodMatching";
 import { createFoodPreferenceContext, isDislikedHit, isLikedHit, type FoodPreferenceContext } from "./recipes/foodPreferences";
 import { loadFoodCatalog, loadStructuredIngredients } from "./recipes/recipeService";
 import { readRecipeDietTypes, readRecipeMealSlots, readRecipeStringList } from "./recipes/recipeJsonColumns";
+import { recipeSnapshotOf, type RecipeSnapshot } from "./recipeAsPlanned";
 import { skipUnreadableRows } from "./validation/jsonColumn";
 import type { StructuredIngredient } from "./recipes/types";
 import {
@@ -31,11 +33,17 @@ function addUsage(usage: RecipeUsage, recipeIds: string[]) {
   for (const id of recipeIds) usage.set(id, (usage.get(id) ?? 0) + 1);
 }
 
-/** Bereits gespeicherte Tage derselben Woche (Montag bis Sonntag), damit auch einzeln erzeugte Tage (Dashboard) zur Woche passen. */
-async function loadWeekUsage(profileId: string, day: CalendarDate): Promise<RecipeUsage> {
+/**
+ * Bereits gespeicherte Tage derselben Woche (Montag bis Sonntag), damit auch einzeln erzeugte Tage (Dashboard) zur Woche passen.
+ * `onlyBefore`: nur Tage vor diesem Kalendertag zählen - bei der Neuplanung die historischen Tage, die bestehen bleiben.
+ */
+async function loadWeekUsage(profileId: string, day: CalendarDate, onlyBefore?: CalendarDate): Promise<RecipeUsage> {
   const monday = startOfWeek(day);
   const days = await prisma.mealPlanDay.findMany({
-    where: { profileId, date: { gte: toDbDate(monday), lte: toDbDate(addDays(monday, 6)) } },
+    where: {
+      profileId,
+      date: { gte: toDbDate(monday), lte: toDbDate(addDays(monday, 6)), ...(onlyBefore ? { lt: toDbDate(onlyBefore) } : {}) },
+    },
     select: { items: { select: { recipeId: true } } },
   });
   const usage: RecipeUsage = new Map();
@@ -49,7 +57,20 @@ function findStoredDayPlan(profileId: string, day: CalendarDate) {
   return prisma.mealPlanDay.findUnique({ where: { profileId_date: { profileId, date: toDbDate(day) } }, include: DAY_PLAN_INCLUDE });
 }
 
-type NewDayPlan = Omit<Prisma.MealPlanDayUncheckedCreateInput, "profileId" | "date">;
+/** Ein fertig geplanter, noch nicht gespeicherter Tag: Tagesziele und Mahlzeiten. */
+interface PlannedDay {
+  targetKcal: number;
+  targetProteinG: number;
+  targetCarbsG: number;
+  targetFatG: number;
+  /** Je Mahlzeit mit Rezept-Snapshot (Name und Nährwerte je Portion zum Planungszeitpunkt, siehe recipeAsPlanned.ts). */
+  items: ({ slot: MealSlot; time: string; recipeId: string; portionMultiplier: number } & RecipeSnapshot)[];
+}
+
+function dayPlanCreateData(profileId: string, day: CalendarDate, plan: PlannedDay) {
+  const { items, ...targets } = plan;
+  return { profileId, date: toDbDate(day), ...targets, items: { create: items } } satisfies Prisma.MealPlanDayUncheckedCreateInput;
+}
 
 /**
  * Speichert einen neu erzeugten Tag. Hat ein paralleler Request (z.B. Dashboard und Food Assistant
@@ -57,9 +78,9 @@ type NewDayPlan = Omit<Prisma.MealPlanDayUncheckedCreateInput, "profileId" | "da
  * Unique-Index [profileId, date]. Dann gilt der zuerst gespeicherte Plan, damit beide Aufrufe
  * denselben stabilen Tag zeigen - genau wie bei einem Aufruf kurz danach.
  */
-async function saveDayPlan(profileId: string, day: CalendarDate, plan: NewDayPlan) {
+async function saveDayPlan(profileId: string, day: CalendarDate, plan: PlannedDay) {
   try {
-    return await prisma.mealPlanDay.create({ data: { profileId, date: toDbDate(day), ...plan }, include: DAY_PLAN_INCLUDE });
+    return await prisma.mealPlanDay.create({ data: dayPlanCreateData(profileId, day, plan), include: DAY_PLAN_INCLUDE });
   } catch (error) {
     if (!isUniqueConstraintError(error)) throw error;
     const savedConcurrently = await findStoredDayPlan(profileId, day);
@@ -76,6 +97,11 @@ async function saveDayPlan(profileId: string, day: CalendarDate, plan: NewDayPla
  * `day` ist ein Kalendertag des Nutzers (z.B. `todayForUser()`), kein Zeitpunkt:
  * Ein Plan gehört zu Profil + Kalendertag, unabhängig von der Serverzeitzone.
  *
+ * `today` ist der Kalendertag des Nutzers, den der Aufrufer einmal pro Request bestimmt
+ * (`todayForUser`). Ein historischer Tag (vor `today`, siehe planDayBoundary.ts) wird nur
+ * gelesen: gibt es keinen gespeicherten Plan, ist das Ergebnis `null` - er wird nie
+ * nachträglich erzeugt (R5E).
+ *
  * `weekUsage`: Rezeptverwendung der laufenden Wochenplanung (siehe
  * getOrGenerateWeekPlan). Wird sie nicht übergeben, wird sie aus den bereits
  * gespeicherten Tagen derselben Woche gelesen. Ein neu erzeugter Tag trägt
@@ -83,12 +109,24 @@ async function saveDayPlan(profileId: string, day: CalendarDate, plan: NewDayPla
  * Hat ein paralleler Request den Tag während der Erzeugung gespeichert, zählen
  * dessen Rezepte (sie standen noch nicht in `weekUsage`).
  */
-export async function getOrGenerateDayPlan(profileId: string, day: CalendarDate, weekUsage?: RecipeUsage) {
+export async function getOrGenerateDayPlan(profileId: string, day: CalendarDate, today: CalendarDate, weekUsage?: RecipeUsage) {
   const existing = await findStoredDayPlan(profileId, day);
   if (existing) return existing;
+  if (isHistoricalPlanDay(day, today)) return null;
 
   const usage = weekUsage ?? (await loadWeekUsage(profileId, day));
+  const saved = await saveDayPlan(profileId, day, await planDay(profileId, day, usage));
 
+  addUsage(usage, saved.items.map((item) => item.recipeId));
+  return saved;
+}
+
+/**
+ * Plant einen Tag mit dem aktuellen Profil (Ziele, Training, Ernährungsform, Allergien, Vorlieben)
+ * und speichert nichts. `usage` ist die Rezeptverwendung der laufenden Wochenplanung und wird nur
+ * gelesen; das Eintragen der gewählten Rezepte übernimmt der Aufrufer.
+ */
+async function planDay(profileId: string, day: CalendarDate, usage: RecipeUsage): Promise<PlannedDay> {
   const profile = await prisma.profile.findUniqueOrThrow({
     where: { id: profileId },
     include: {
@@ -236,23 +274,19 @@ export async function getOrGenerateDayPlan(profileId: string, day: CalendarDate,
   }
   const { items: chosenItems, scales: jointScales } = picked;
 
-  const saved = await saveDayPlan(profileId, day, {
+  return {
     targetKcal: targets.kcal,
     targetProteinG: targets.proteinG,
     targetCarbsG: targets.carbsG,
     targetFatG: targets.fatG,
-    items: {
-      create: chosenItems.map((item, i) => ({
-        slot: item.slot,
-        time: item.time,
-        recipeId: item.recipeId,
-        portionMultiplier: jointScales[i] ?? item.priorScale,
-      })),
-    },
-  });
-
-  addUsage(usage, saved.items.map((item) => item.recipeId));
-  return saved;
+    items: chosenItems.map((item, i) => ({
+      slot: item.slot,
+      time: item.time,
+      recipeId: item.recipeId,
+      portionMultiplier: jointScales[i] ?? item.priorScale,
+      ...recipeSnapshotOf(item.recipe),
+    })),
+  };
 }
 
 /**
@@ -261,8 +295,11 @@ export async function getOrGenerateDayPlan(profileId: string, day: CalendarDate,
  * Rezepte die Tage davor gewählt haben. Bereits gespeicherte Tage bleiben
  * unverändert, zählen aber ebenfalls für die Rezeptverwendung, auch wenn sie
  * später in der Woche liegen als ein neu erzeugter Tag.
+ *
+ * Historische Tage (vor `today`) ohne gespeicherten Plan bleiben `null`, siehe
+ * getOrGenerateDayPlan - die Woche erzeugt nur heute und die Zukunft.
  */
-export async function getOrGenerateWeekPlan(profileId: string, weekStart: CalendarDate) {
+export async function getOrGenerateWeekPlan(profileId: string, weekStart: CalendarDate, today: CalendarDate) {
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
   const stored = await prisma.mealPlanDay.findMany({
@@ -276,7 +313,120 @@ export async function getOrGenerateWeekPlan(profileId: string, weekStart: Calend
 
   const plans = [];
   for (const day of days) {
-    plans.push(storedByDay.get(day) ?? (await getOrGenerateDayPlan(profileId, day, usage)));
+    plans.push(storedByDay.get(day) ?? (await getOrGenerateDayPlan(profileId, day, today, usage)));
   }
   return plans;
+}
+
+/** Die gespeicherten bearbeitbaren Tage des Profils (ab `today`), aufsteigend. */
+async function findStoredEditableDays(profileId: string, today: CalendarDate): Promise<CalendarDate[]> {
+  const days = await prisma.mealPlanDay.findMany({
+    where: { profileId, date: { gte: toDbDate(today) } },
+    select: { date: true },
+    orderBy: { date: "asc" },
+  });
+  return days.map((d) => fromDbDate(d.date));
+}
+
+/** Gibt es gespeicherte bearbeitbare Tage (ab `today`)? Rein lesend, erzeugt keinen Tag. */
+export async function hasStoredEditableDays(profileId: string, today: CalendarDate): Promise<boolean> {
+  const day = await prisma.mealPlanDay.findFirst({ where: { profileId, date: { gte: toDbDate(today) } }, select: { id: true } });
+  return day !== null;
+}
+
+/**
+ * Die Slots, für die an `day` schon ein Log-Eintrag existiert. Plan und Log gehören - wie auf dem
+ * Dashboard - allein über den Slot zusammen: ein geloggter Slot gilt für alle Mahlzeiten dieses Slots.
+ */
+async function loadLoggedSlots(profileId: string, day: CalendarDate): Promise<MealSlot[]> {
+  const entries = await prisma.logEntry.findMany({ where: { profileId, date: toDbDate(day) }, select: { slot: true } });
+  return [...new Set(entries.map((entry) => entry.slot))];
+}
+
+/** Ein neu geplanter Tag, wie ihn replaceEditableDayPlans speichert. */
+interface RegeneratedDay {
+  day: CalendarDate;
+  /** Die neu geplanten Mahlzeiten - ohne die Slots in `keptSlots`. */
+  plan: PlannedDay;
+  /** Nur heute: bereits geloggte Slots. Ihre gespeicherten Mahlzeiten bleiben unverändert (samt Snapshot). */
+  keptSlots: MealSlot[];
+}
+
+/**
+ * Ersetzt die gespeicherten Tage durch ihre Neuplanung in EINER Transaktion: Scheitert ein Schritt,
+ * bleiben alle alten Tage erhalten. Der Filter `date >= today` schützt historische Tage zusätzlich
+ * auf Datenbankebene; die Einträge der alten Tage gehen per Cascade mit, Log-Einträge hängen nicht daran.
+ *
+ * Ein Tag mit behaltenen Slots (heute, schon teilweise geloggt) bleibt als Zeile bestehen: Nur die
+ * Mahlzeiten der übrigen Slots werden ersetzt, die Tagesziele auf das aktuelle Profil gesetzt.
+ */
+async function replaceEditableDayPlans(profileId: string, today: CalendarDate, regeneratedDays: RegeneratedDay[]) {
+  const fullyReplaced = regeneratedDays.filter(({ keptSlots }) => keptSlots.length === 0);
+  const partlyReplaced = regeneratedDays.filter(({ keptSlots }) => keptSlots.length > 0);
+
+  await prisma.$transaction([
+    prisma.mealPlanDay.deleteMany({
+      where: { profileId, date: { in: fullyReplaced.map(({ day }) => toDbDate(day)), gte: toDbDate(today) } },
+    }),
+    ...fullyReplaced.map(({ day, plan }) => prisma.mealPlanDay.create({ data: dayPlanCreateData(profileId, day, plan) })),
+    ...partlyReplaced.flatMap(({ day, plan, keptSlots }) => {
+      const { items, ...targets } = plan;
+      return [
+        prisma.mealPlanItem.deleteMany({ where: { mealPlanDay: { profileId, date: toDbDate(day) }, slot: { notIn: keptSlots } } }),
+        prisma.mealPlanDay.update({
+          where: { profileId_date: { profileId, date: toDbDate(day) } },
+          data: { ...targets, items: { create: items } },
+        }),
+      ];
+    }),
+  ]);
+}
+
+/**
+ * Plant heute und alle bereits gespeicherten künftigen Tage des Profils mit dem aktuellen Profil neu
+ * (R5E). Eine ausdrückliche Aktion - Profil- und Rezeptspeichern lösen sie nie aus.
+ *
+ * - Historische Tage (vor `today`) werden weder gelesen noch geändert noch gelöscht.
+ * - Heute bleiben bereits geloggte Slots samt ihren Mahlzeiten stehen ("Plan = geplant, Log = gegessen");
+ *   nur die übrigen Slots werden neu geplant. Künftige Tage werden vollständig neu geplant.
+ * - Neu geplant werden genau die gespeicherten Tage ab `today`; fehlende Tage legt die Neuplanung
+ *   nicht an (sie entstehen wie bisher beim ersten Lesen, z.B. Dashboard oder /plan).
+ * - Abwechslung wie in getOrGenerateWeekPlan: je Woche zählen die bleibenden historischen Tage, die
+ *   behaltenen Mahlzeiten von heute und die bereits neu geplanten Tage davor.
+ * - Erst wird alles geplant, dann in einer Transaktion ersetzt (replaceEditableDayPlans).
+ *
+ * `today` ist der Kalendertag des Nutzers, den der Aufrufer einmal bestimmt (`todayForUser`).
+ */
+export async function regenerateEditableDays(profileId: string, today: CalendarDate): Promise<{ regeneratedDays: CalendarDate[] }> {
+  const editableDays = await findStoredEditableDays(profileId, today);
+  if (editableDays.length === 0) return { regeneratedDays: [] };
+
+  const loggedSlotsToday = await loadLoggedSlots(profileId, today);
+  const usageByWeek = new Map<CalendarDate, RecipeUsage>();
+  const regeneratedDays: RegeneratedDay[] = [];
+  for (const day of editableDays) {
+    const weekStart = startOfWeek(day);
+    const usage = usageByWeek.get(weekStart) ?? (await loadWeekUsage(profileId, day, today));
+    usageByWeek.set(weekStart, usage);
+
+    const keptSlots = day === today ? loggedSlotsToday : [];
+    if (keptSlots.length > 0) addUsage(usage, await loadRecipeIdsOfSlots(profileId, day, keptSlots));
+
+    const fullPlan = await planDay(profileId, day, usage);
+    const plan = { ...fullPlan, items: fullPlan.items.filter((item) => !keptSlots.includes(item.slot)) };
+    addUsage(usage, plan.items.map((item) => item.recipeId));
+    regeneratedDays.push({ day, plan, keptSlots });
+  }
+
+  await replaceEditableDayPlans(profileId, today, regeneratedDays);
+  return { regeneratedDays: editableDays };
+}
+
+/** Rezepte der gespeicherten Mahlzeiten in `slots` an `day` - die behaltenen zählen für die Abwechslung mit. */
+async function loadRecipeIdsOfSlots(profileId: string, day: CalendarDate, slots: MealSlot[]): Promise<string[]> {
+  const items = await prisma.mealPlanItem.findMany({
+    where: { mealPlanDay: { profileId, date: toDbDate(day) }, slot: { in: slots } },
+    select: { recipeId: true },
+  });
+  return items.map((item) => item.recipeId);
 }

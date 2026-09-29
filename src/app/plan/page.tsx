@@ -17,7 +17,9 @@ export default async function WeekPlanPage() {
   const monday = startOfWeek(today);
 
   // Nacheinander statt parallel: jeder Tag berücksichtigt die Rezepte der Tage davor.
-  const plans = await getOrGenerateWeekPlan(profileId, monday);
+  const weekPlans = await getOrGenerateWeekPlan(profileId, monday, today);
+  // Vergangene Tage ohne gespeicherten Plan (null) werden nicht nachgeneriert; der Ledger zeigt sie als Tag ohne Plan.
+  const plans = weekPlans.map((plan) => plan ?? { items: [] });
   const ledger = buildWeekLedger({ weekStart: monday, plans, today });
   const recipes = collectPlanRecipes(plans);
 

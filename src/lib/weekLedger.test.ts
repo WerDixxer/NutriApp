@@ -18,7 +18,8 @@ const FRIDAY: CalendarDate = "2026-09-18";
 let counter = 0;
 function item(slot: string, time: string, name: string, kcal: number, portionMultiplier = 1): LedgerPlanItem {
   counter += 1;
-  return { id: `item-${counter}`, slot, time, portionMultiplier, recipe: { id: `recipe-${name}`, name, kcal } };
+  // Ohne Snapshot-Spalten wie ein Eintrag von vor R5E: Name und kcal kommen aus dem Rezept.
+  return { id: `item-${counter}`, slot, time, portionMultiplier, recipe: { id: `recipe-${name}`, name, kcal, proteinG: 20, carbsG: 40, fatG: 10 } };
 }
 
 function standardDay(): LedgerPlanItem[] {
@@ -297,5 +298,36 @@ describe("collectPlanRecipes", () => {
 
   it("liefert für eine Woche ohne Pläne ein leeres Objekt", () => {
     expect(collectPlanRecipes([{ items: [] }, { items: [] }])).toEqual({});
+  });
+});
+
+describe("buildWeekLedger: Rezept-Snapshot (R5E)", () => {
+  /** Geplant als "Udon-Salat" mit 500 kcal je Portion; das Rezept heißt inzwischen anders und hat 620 kcal. */
+  function plannedEntry(portionMultiplier: number): LedgerPlanItem {
+    return {
+      ...item("LUNCH", "13:00", "Udon-Salat (neu)", 620, portionMultiplier),
+      recipeName: "Udon-Salat",
+      recipeKcal: 500,
+      recipeProteinG: 40,
+      recipeCarbsG: 55,
+      recipeFatG: 14,
+    };
+  }
+
+  it("zeigt Name, kcal und Tagessumme wie geplant, nicht die aktuellen Rezeptwerte", () => {
+    const { days } = buildWeekLedger({ weekStart: MONDAY, plans: week({ 0: [plannedEntry(1.5)] }), today: FRIDAY });
+
+    expect(days[0].meals[0]).toMatchObject({ name: "Udon-Salat", kcal: 750, portionMultiplier: 1.5 });
+    expect(days[0].meals[0].plannedRecipe).toEqual({ name: "Udon-Salat", kcal: 500, proteinG: 40, carbsG: 55, fatG: 14 });
+    expect(days[0].kcalTotal).toBe(750);
+    expect(days[0].headline).toBe("Udon-Salat");
+  });
+
+  it("zeigt einen Eintrag ohne Snapshot (von vor R5E) mit den aktuellen Rezeptwerten", () => {
+    const legacy = item("LUNCH", "13:00", "Udon-Salat (neu)", 620, 1.5);
+    const { days } = buildWeekLedger({ weekStart: MONDAY, plans: week({ 0: [legacy] }), today: FRIDAY });
+
+    expect(days[0].meals[0]).toMatchObject({ name: "Udon-Salat (neu)", kcal: 930 });
+    expect(days[0].meals[0].plannedRecipe).toEqual({ name: "Udon-Salat (neu)", kcal: 620, proteinG: 20, carbsG: 40, fatG: 10 });
   });
 });

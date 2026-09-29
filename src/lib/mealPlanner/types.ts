@@ -1,5 +1,6 @@
 import type { DietType } from "@prisma/client";
 import type { CalendarDate } from "../calendarDate";
+import type { RecipeSnapshot } from "../recipeAsPlanned";
 import type { MacroTarget } from "../nutrition";
 import type { SearchableRecipe } from "../agents/recipeSearch";
 import type { HouseholdPantryContext } from "../rotation/rotationService";
@@ -42,12 +43,12 @@ export interface SlotTarget extends MacroTarget {
   slot: PlannableMealSlot;
 }
 
-export interface GeneratedMeal {
+/** Eine geplante Mahlzeit samt Rezept-Snapshot (`recipeName`, `recipeKcal`, ..., siehe recipeAsPlanned.ts) des gewählten Kandidaten. */
+export interface GeneratedMeal extends RecipeSnapshot {
   /** Kalendertag der Mahlzeit (siehe src/lib/calendarDate.ts); wird erst beim Speichern zum DB-Wert. */
   date: CalendarDate;
   slot: PlannableMealSlot;
   recipeId: string;
-  recipeName: string;
   portionMultiplier: number;
   /** Nur tatsächlich berechnete Gründe, siehe mealPlanner/softScoring.ts. */
   reasons: string[];

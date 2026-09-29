@@ -5,6 +5,7 @@ import { getOrGenerateDayPlan } from "@/lib/generateMealPlan";
 import DashboardClient, { type LogEntryView, type PlanItemView } from "./DashboardClient";
 import { GOAL_LABELS } from "@/lib/labels";
 import { dbRecipeToDetail } from "@/lib/recipeDetail";
+import { recipeAsPlanned } from "@/lib/recipeAsPlanned";
 import { DecideRing } from "@/components/DecideRing";
 import { requireProfile } from "@/lib/session";
 import { analyzeRecipesForProfile, toPersonalizationInput } from "@/lib/recipes/recipeService";
@@ -31,7 +32,9 @@ export default async function DashboardPage() {
 
   const now = new Date();
   const today = todayForUser(now);
-  const plan = await getOrGenerateDayPlan(profile.id, today);
+  // Heute ist nie historisch und wird bei Bedarf erzeugt; `null` wäre nur ein leerer Tag.
+  const plan = await getOrGenerateDayPlan(profile.id, today, today);
+  const plannedItems = plan?.items ?? [];
   const entries = await prisma.logEntry.findMany({
     where: { profileId: profile.id, date: toDbDate(today) },
     orderBy: { createdAt: "asc" },
@@ -41,15 +44,16 @@ export default async function DashboardPage() {
   // Nur Rezepte mit strukturierten Zutaten werden angepasst, alle anderen bleiben Original.
   const analyses = await analyzeRecipesForProfile(
     profile.id,
-    plan.items.map((item) => ({ id: item.recipe.id, servings: item.recipe.servings, ingredients: item.recipe.ingredients })),
+    plannedItems.map((item) => ({ id: item.recipe.id, servings: item.recipe.servings, ingredients: item.recipe.ingredients })),
   );
 
-  const planItems: PlanItemView[] = plan.items.map((item) => ({
+  const planItems: PlanItemView[] = plannedItems.map((item) => ({
     id: item.id,
     slot: item.slot,
     time: item.time,
+    // Name und Nährwerte wie geplant (Snapshot, R5E); Zutaten, Zubereitung und die Personalisierung aus dem aktuellen Rezept.
     recipe: dbRecipeToDetail(
-      item.recipe,
+      recipeAsPlanned(item),
       item.portionMultiplier,
       toPersonalizationInput(analyses.get(item.recipe.id)?.personalized),
     ),

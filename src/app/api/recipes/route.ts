@@ -59,10 +59,7 @@ export async function POST(request: Request) {
     },
   });
 
-  // Bereits generierte Pläne kennen dieses neue Rezept noch nicht -> neu generieren lassen,
-  // damit es ab sofort in Vorschläge einfließen kann.
-  await prisma.mealPlanDay.deleteMany({ where: { profileId: profile.id } });
-
+  // Bestehende Tagespläne bleiben unverändert (R5E); das neue Rezept fließt in neu erzeugte Tage ein.
   return NextResponse.json({ recipe });
 }
 

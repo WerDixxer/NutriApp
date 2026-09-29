@@ -1,5 +1,6 @@
 import { prisma } from "../db";
 import { dbRecipeToDetail } from "../recipeDetail";
+import { recipeAsPlanned } from "../recipeAsPlanned";
 import type { RecipeDetail } from "@/components/RecipeDetailModal";
 import { getLLMProvider, type LLMMessage } from "./llmProvider";
 import { extractAssistantQuery } from "./queryExtraction";
@@ -241,9 +242,10 @@ async function runTransformRecipeTask(profileId: string, query: AssistantQuery):
 }
 
 async function runBuildMealPlanTask(profileId: string): Promise<TaskResult> {
-  const plan = await getOrGenerateDayPlan(profileId, todayForUser());
+  const today = todayForUser();
+  const plan = await getOrGenerateDayPlan(profileId, today, today);
 
-  if (plan.items.length === 0) {
+  if (!plan || plan.items.length === 0) {
     return {
       resultText: "Ich konnte noch keinen Plan für heute erstellen, das passende Rezept fehlt vermutlich in deiner Datenbank.",
       recipes: [],
@@ -251,8 +253,9 @@ async function runBuildMealPlanTask(profileId: string): Promise<TaskResult> {
     };
   }
 
-  const recipes = plan.items.map((item) => dbRecipeToDetail(item.recipe, item.portionMultiplier));
-  const totalKcal = Math.round(plan.items.reduce((sum, item) => sum + item.recipe.kcal * item.portionMultiplier, 0));
+  // Name und Nährwerte wie geplant (Snapshot, R5E), Zutaten und Zubereitung aus dem aktuellen Rezept.
+  const recipes = plan.items.map((item) => dbRecipeToDetail(recipeAsPlanned(item), item.portionMultiplier));
+  const totalKcal = Math.round(plan.items.reduce((sum, item) => sum + recipeAsPlanned(item).kcal * item.portionMultiplier, 0));
   const resultText = `Dein Plan für heute: ${recipes.map((r) => r.name).join(", ")} (zusammen ~${totalKcal} kcal).`;
 
   return { resultText, recipes, action: { type: "SHOW_MEAL_PLAN" } };
