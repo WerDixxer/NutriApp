@@ -39,8 +39,9 @@ Aufbau des Codes:
   Nährwerte, Katalog, Qualität, Review, Import), `mealPlanner/` (Haushaltspläne), `agents/`
   (Decision Engine, Food Assistant, Macro Rescue), `pantry/`, `rotation/`, `shopping/`, `budget/`,
   `household/`, `insights/`, `mealPrep/`, `evidence/`, `providers/`, `validation/` (zod-Schemas).
-  Daneben der ältere Tagesplaner `planner.ts` / `generateMealPlan.ts` und die Zielberechnung
-  `nutrition.ts`.
+  Daneben der persönliche Tagesplaner `planner.ts` / `generateMealPlan.ts` und die Zielberechnung
+  `nutrition.ts`. Tagesplan und Haushalts-Essensplan sind zwei getrennte Systeme, siehe
+  [docs/planungssysteme.md](docs/planungssysteme.md).
 - `src/components/` – gemeinsame UI, `src/components/ui/` – Basis-Bausteine.
 - `prisma/` – Schema und Seed-Skripte.
 
@@ -242,8 +243,9 @@ Es gibt derzeit **keinen dokumentierten und geprüften Produktionsbetrieb**. Bek
 - **Kalendertage (F-10):** Tagespläne, Wochenplan, Log und Haushalts-Essenspläne gehören zum
   Kalendertag des Nutzers und hängen nicht mehr von der Serverzeitzone ab
   (`src/lib/calendarDate.ts`, in der DB als UTC-Mitternacht). Eine Zeitzone pro Nutzer gibt es noch
-  nicht: VYN nimmt für alle Nutzer `Europe/Berlin` an. Budgetzeiträume und Ablaufdaten im Vorrat
-  rechnen weiterhin in der lokalen Zeit des Servers. Vor F-10 gespeicherte Tagespläne und
+  nicht: VYN nimmt für alle Nutzer `Europe/Berlin` an. Ablaufdaten im Vorrat zählen ebenfalls in
+  Kalendertagen dieser Zeitzone (L-1, `src/lib/pantry/expiration.ts`); Budgetzeiträume rechnen
+  weiterhin in der lokalen Zeit des Servers. Vor F-10 gespeicherte Tagespläne und
   Log-Einträge lagen auf Mitternacht Serverzeit; die lokale Entwicklungsdatenbank wurde einmalig
   umgerechnet (Regel: `src/scripts/f10CalendarDateCorrection.test.ts`). Andere Datenbanken mit
   Daten von vor F-10 bräuchten dieselbe Umrechnung.

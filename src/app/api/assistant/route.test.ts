@@ -92,18 +92,25 @@ async function seedEarlierRequests(msAgoList: number[]) {
   });
 }
 
-/** LLM-Aufruf, der erst nach `release()` antwortet - hält eine Anfrage bewusst aktiv. */
+/**
+ * LLM-Aufruf, der erst nach `release()` antwortet - hält eine Anfrage bewusst aktiv. `secondCall` erfüllt
+ * sich beim zweiten LLM-Aufruf: vor `release()` heißt das, dass eine zweite Anfrage zugelassen wurde.
+ */
 function blockingLlm() {
   let release!: () => void;
   let markStarted!: () => void;
+  let markSecondCall!: () => void;
   const released = new Promise<void>((resolve) => (release = resolve));
   const started = new Promise<void>((resolve) => (markStarted = resolve));
+  const secondCall = new Promise<void>((resolve) => (markSecondCall = resolve));
+  let calls = 0;
   llm.chat = async () => {
-    markStarted();
+    if (++calls === 1) markStarted();
+    else markSecondCall();
     await released;
     return TEXT_RESPONSE;
   };
-  return { started, release };
+  return { started, secondCall, release };
 }
 
 // ---------------------------------------------------------------------------
@@ -237,11 +244,20 @@ describe("POST /api/assistant: parallele Anfragen desselben Nutzers", () => {
 
   it("exakt gleichzeitig: genau eine Anfrage startet den Assistant, die andere bekommt 429", async () => {
     const llmCall = blockingLlm();
-    const both = Promise.all([POST(post()), POST(post())]);
+    const requests = [POST(post()), POST(post())];
     await llmCall.started;
+    // Die zugelassene Anfrage hängt im LLM-Aufruf und hält die Sperre. Freigegeben wird erst, wenn die
+    // andere Anfrage beantwortet ist - sonst könnte sie die Sperre erst nach dem Ende der ersten
+    // versuchen, und zwei nacheinander zugelassene Anfragen (200, 200) wären korrekt. Eine zweite
+    // Zulassung während der Sperre zeigt sich als zweiter LLM-Aufruf vor der Freigabe.
+    const firstSettled = await Promise.race([
+      Promise.race(requests).then((res) => res.status),
+      llmCall.secondCall.then(() => "zweite Anfrage zugelassen, während die erste noch lief"),
+    ]);
+    expect(firstSettled).toBe(429);
     llmCall.release();
 
-    const statuses = (await both).map((res) => res.status).sort();
+    const statuses = (await Promise.all(requests)).map((res) => res.status).sort();
     expect(statuses).toEqual([200, 429]);
     expect(await countedRequests()).toBe(1);
     expect(llm.calls).toBe(2);
