@@ -13,6 +13,7 @@ import {
 } from "./personalization";
 import {
   RECIPE_UNITS,
+  isDietClass,
   type AlternativeType,
   type CatalogEdge,
   type CatalogFood,
@@ -54,6 +55,18 @@ function readFoodUnitGrams(row: IngredientRow): UnitGrams | undefined {
   return readOrFallback(() => readJsonColumn({ model: "Ingredient", id: row.id, column: "unitGrams" }, value, storedUnitGramsSchema), undefined);
 }
 
+/**
+ * `Ingredient.dietClass` ist eine String-Spalte. Fehlt sie oder ist der Wert unbekannt, gilt das Food
+ * konservativ als omnivore (wie unbekannte Foods in deriveDietClass) - ein unbekannter Wert meldet sich
+ * mit Warnung, statt ein Rezept still als vegan durchgehen zu lassen.
+ */
+function catalogDietClass(row: IngredientRow): DietClass {
+  if (row.dietClass === null) return "omnivore";
+  if (isDietClass(row.dietClass)) return row.dietClass;
+  console.warn(`[food-catalog] Ingredient ${row.id}: unbekannte dietClass "${row.dietClass}", gilt konservativ als omnivore.`);
+  return "omnivore";
+}
+
 function rowToCatalogFood(row: IngredientRow): CatalogFood {
   const hasNutrition = row.kcalPer100 !== null;
   return {
@@ -61,7 +74,7 @@ function rowToCatalogFood(row: IngredientRow): CatalogFood {
     slug: row.slug ?? row.id,
     name: row.name,
     category: row.category ?? "other",
-    dietClass: (row.dietClass as DietClass | null) ?? "omnivore",
+    dietClass: catalogDietClass(row),
     allergens: readFoodStringList(row, "allergens"),
     aliases: readFoodStringList(row, "aliases"),
     negligible: row.negligible,

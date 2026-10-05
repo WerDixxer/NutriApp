@@ -1,3 +1,5 @@
+import { recipePayloadSchema } from "../validation/recipes";
+import { firstZodIssue } from "../validation/zodError";
 import { getLLMProvider } from "./llmProvider";
 
 export interface TransformableRecipe {
@@ -78,29 +80,21 @@ const SUBMIT_TOOL = {
   },
 } as const;
 
-function isValidToolInput(input: unknown): input is {
-  name: string;
-  description: string;
-  ingredients: string[];
-  instructions: string[];
-  kcal: number;
-  proteinG: number;
-  carbsG: number;
-  fatG: number;
-} {
-  if (typeof input !== "object" || input === null) return false;
-  const o = input as Record<string, unknown>;
-  return (
-    typeof o.name === "string" &&
-    typeof o.description === "string" &&
-    Array.isArray(o.ingredients) &&
-    Array.isArray(o.instructions) &&
-    typeof o.kcal === "number" &&
-    typeof o.proteinG === "number" &&
-    typeof o.carbsG === "number" &&
-    typeof o.fatG === "number"
-  );
-}
+/**
+ * Die Felder, die die KI liefert, geprüft mit den Regeln des zentralen Rezept-Schemas (R5F-8) - dieselben
+ * Grenzen wie beim manuellen Anlegen. Das vollständige Rezept prüft der Aufrufer vor dem Speichern
+ * nochmals als Ganzes mit `recipePayloadSchema`.
+ */
+const aiRecipeFieldsSchema = recipePayloadSchema.pick({
+  name: true,
+  description: true,
+  ingredients: true,
+  instructions: true,
+  kcal: true,
+  proteinG: true,
+  carbsG: true,
+  fatG: true,
+});
 
 /**
  * Schreibt ein Rezept anhand einer Anweisung um (proteinreicher, vegan,
@@ -142,11 +136,14 @@ export async function transformRecipe(
   });
 
   const toolUse = response.content.find((b) => b.type === "tool_use");
-  if (!toolUse || toolUse.type !== "tool_use" || !isValidToolInput(toolUse.input)) {
-    throw new Error("Die KI hat kein gültiges umgeschriebenes Rezept zurückgegeben.");
+  const parsed = toolUse?.type === "tool_use" ? aiRecipeFieldsSchema.safeParse(toolUse.input) : null;
+  if (!parsed?.success) {
+    // Ohne Rohdaten der KI in der Meldung; der Grund (Feld und Regel) reicht fürs Server-Log.
+    const reason = parsed ? ` (${firstZodIssue(parsed.error)})` : "";
+    throw new Error(`Die KI hat kein gültiges umgeschriebenes Rezept zurückgegeben${reason}.`);
   }
 
-  const result = toolUse.input;
+  const result = parsed.data;
   return {
     name: result.name,
     description: result.description,

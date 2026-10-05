@@ -21,6 +21,7 @@ vi.mock("@/lib/session", () => ({ getApiUserId: async () => session.userId }));
 
 const { prisma } = await import("@/lib/db");
 const { GET, POST } = await import("./route");
+const { loadProfileForForm } = await import("@/app/onboarding/profileLoad");
 
 /** Nur ein Platzhalterwert im bcrypt-Format - er darf in keiner Antwort auftauchen. */
 const PASSWORD_HASH = "$2a$12$r2TestOnlyHashValueThatMustNeverReachTheBrowser1234567";
@@ -460,5 +461,38 @@ describe("POST /api/profile: Hinweis auf Plananpassung (R5E-3)", () => {
 
     expect(res.status).toBe(200);
     expect((await res.json()).planAdaptation).toEqual({ needed: false });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R5F-1: Das Profil-Formular deutet die echte GET-Antwort richtig
+// ---------------------------------------------------------------------------
+
+describe("GET /api/profile als Quelle des Profil-Formulars (R5F-1)", () => {
+  it("ein gespeichertes Profil wird vollständig übernommen (auch die Allergien)", async () => {
+    await createUserWithProfile();
+
+    const state = await loadProfileForForm(() => GET());
+
+    expect(state.status).toBe("existing");
+    expect(state.status === "existing" && state.profile).toMatchObject({ age: 34, dietType: "VEGETARIAN", allergies: [{ label: "Erdnüsse" }] });
+  });
+
+  it("ohne Profil gilt das Formular als erstes Onboarding", async () => {
+    const user = await createUser();
+    session.userId = user.id;
+
+    expect(await loadProfileForForm(() => GET())).toEqual({ status: "new" });
+  });
+
+  it("nicht angemeldet (401) ist ein Ladefehler, kein neues Profil", async () => {
+    expect(await loadProfileForForm(() => GET())).toEqual({ status: "error" });
+  });
+
+  it("unlesbare gespeicherte Daten (GET scheitert) sperren das Speichern, statt mit Startwerten weiterzumachen", async () => {
+    const { profile } = await createUserWithProfile();
+    await prisma.profile.update({ where: { id: profile.id }, data: { subscribedTrendTags: "kaputt" } });
+
+    expect(await loadProfileForForm(() => GET())).toEqual({ status: "error" });
   });
 });

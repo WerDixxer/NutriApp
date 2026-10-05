@@ -1,4 +1,5 @@
 import { addDays, todayForUser, type CalendarDate } from "../calendarDate";
+import { PORTION_SCALE_BOUNDS } from "../foodMatching";
 import { computeJointPortionScales, type RecipeCandidate } from "../planner";
 import { recipeSnapshotOf } from "../recipeAsPlanned";
 import type { MacroTarget } from "../nutrition";
@@ -29,9 +30,9 @@ const RECENT_MAIN_INGREDIENT_WINDOW = 4;
 // verwendet (Abschnitt 3: keine trainingszeitabhängige Slot-Planung über mehrere Personen
 // hinweg). Statt eine künstliche `time`-Attrappe zu erfinden, nur um planner.ts:computePortionScale
 // (eine reine Ein-Zeilen-Formel) typkompatibel aufzurufen, hier dieselbe Formel/Grenzen direkt.
-function estimatePortionScale(targetKcal: number, recipeKcal: number): number {
+export function estimatePortionScale(targetKcal: number, recipeKcal: number): number {
   const raw = targetKcal / Math.max(recipeKcal, 1);
-  return Math.min(Math.max(raw, 0.4), 2.5);
+  return Math.min(Math.max(raw, PORTION_SCALE_BOUNDS.min), PORTION_SCALE_BOUNDS.max);
 }
 
 /**

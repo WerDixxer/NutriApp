@@ -14,7 +14,9 @@ import { transformRecipe } from "./recipeTransformer";
 import { getOrGenerateDayPlan } from "../generateMealPlan";
 import { todayForUser } from "../calendarDate";
 import { attachStructuredIngredients, loadFoodCatalog } from "../recipes/recipeService";
-import { readRecipeDietTypes, readRecipeStringList } from "../recipes/recipeJsonColumns";
+import { readRecipeDietTypes, readRecipeMealSlots, readRecipeStringList } from "../recipes/recipeJsonColumns";
+import { recipePayloadSchema } from "../validation/recipes";
+import { firstZodIssue } from "../validation/zodError";
 
 /**
  * System-Prompt nur noch für die freie Text-Antwort (ANSWER_QUESTION/OTHER).
@@ -206,22 +208,45 @@ async function runTransformRecipeTask(profileId: string, query: AssistantQuery):
   if (lower.includes("halal")) dietTypes.add("HALAL");
   if (lower.includes("koscher") || lower.includes("kosher")) dietTypes.add("KOSHER");
 
+  // Das fertige Rezept (KI-Felder plus vom Original übernommene) läuft wie ein manuell angelegtes durch das
+  // zentrale Schema, bevor etwas gespeichert wird (R5F-8). Ungültig -> Fehler, nichts wird angelegt.
+  const payload = recipePayloadSchema.safeParse({
+    name: transformed.name,
+    description: transformed.description,
+    kcal: transformed.kcal,
+    proteinG: transformed.proteinG,
+    carbsG: transformed.carbsG,
+    fatG: transformed.fatG,
+    prepTimeMin: original.prepTimeMin,
+    servings: original.servings,
+    mealSlots: readRecipeMealSlots(original),
+    dietTypes: Array.from(dietTypes),
+    allergens: readRecipeStringList(original, "allergens"),
+    tags: [...readRecipeStringList(original, "tags"), "ki-angepasst"],
+    ingredients: transformed.ingredients,
+    instructions: transformed.instructions,
+  });
+  if (!payload.success) {
+    throw new Error(`Das umgeschriebene Rezept erfüllt die Rezeptvorgaben nicht (${firstZodIssue(payload.error)}).`);
+  }
+  const valid = payload.data;
+
   const saved = await prisma.recipe.create({
     data: {
-      name: transformed.name,
-      description: transformed.description,
-      kcal: transformed.kcal,
-      proteinG: transformed.proteinG,
-      carbsG: transformed.carbsG,
-      fatG: transformed.fatG,
-      prepTimeMin: original.prepTimeMin,
-      servings: original.servings,
-      mealSlots: original.mealSlots,
-      dietTypes: JSON.stringify(Array.from(dietTypes)),
-      allergens: original.allergens,
-      ingredients: JSON.stringify(transformed.ingredients),
-      instructions: JSON.stringify(transformed.instructions),
-      tags: JSON.stringify([...readRecipeStringList(original, "tags"), "ki-angepasst"]),
+      name: valid.name,
+      description: valid.description,
+      kcal: valid.kcal,
+      proteinG: valid.proteinG,
+      carbsG: valid.carbsG,
+      fatG: valid.fatG,
+      prepTimeMin: valid.prepTimeMin,
+      servings: valid.servings,
+      mealSlots: JSON.stringify(valid.mealSlots),
+      dietTypes: JSON.stringify(valid.dietTypes),
+      allergens: JSON.stringify(valid.allergens),
+      ingredients: JSON.stringify(valid.ingredients),
+      instructions: JSON.stringify(valid.instructions),
+      tags: JSON.stringify(valid.tags),
       isCustom: true,
       ownerProfileId: profileId,
       nutritionSource: transformed.nutritionSource,

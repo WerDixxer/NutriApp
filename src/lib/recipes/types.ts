@@ -9,6 +9,10 @@
 export const DIET_CLASSES = ["vegan", "vegetarian", "pescatarian", "omnivore"] as const;
 export type DietClass = (typeof DIET_CLASSES)[number];
 
+export function isDietClass(value: string): value is DietClass {
+  return (DIET_CLASSES as readonly string[]).includes(value);
+}
+
 /** Je höher, desto weniger restriktiv (ein veganes Rezept passt zu jeder Form). */
 export const DIET_CLASS_RANK: Record<DietClass, number> = {
   vegan: 0,

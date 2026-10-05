@@ -42,7 +42,8 @@ describe("listMealPlans / getMealPlan: Household-Isolation", () => {
 describe("createMealPlan: verschachtelte, atomare Persistierung", () => {
   it("erstellt Plan, Mitglieder und Mahlzeiten in einem einzigen verschachtelten create()", async () => {
     mealPlanCreate.mockResolvedValueOnce({ id: "plan-1" });
-    await createMealPlan("household-A", {
+    // Als Entwurf: ein einziger verschachtelter create(). Die ACTIVE-Erzeugung samt Archivierung prüft mealPlanLifecycle.test.ts.
+    const result = await createMealPlan("household-A", {
       startDate: "2026-09-21",
       endDate: "2026-09-27",
       householdMemberIds: ["member-1", "member-2"],
@@ -60,8 +61,9 @@ describe("createMealPlan: verschachtelte, atomare Persistierung", () => {
           reasons: ["Test-Grund"],
         },
       ],
-      status: "ACTIVE",
+      status: "DRAFT",
     });
+    expect(result).toEqual({ plan: { id: "plan-1" }, archivedPlanIds: [] });
     expect(mealPlanCreate).toHaveBeenCalledTimes(1);
     const createCall = mealPlanCreate.mock.calls[0][0];
     expect(createCall.data.householdId).toBe("household-A");
@@ -78,26 +80,31 @@ describe("createMealPlan: verschachtelte, atomare Persistierung", () => {
 });
 
 describe("updateMealPlan: Authorization", () => {
-  it("gibt null zurück für einen fremden Plan, ohne zu schreiben", async () => {
+  it("meldet NOT_FOUND für einen fremden Plan, ohne zu schreiben", async () => {
     mealPlanFindFirst.mockResolvedValueOnce(null);
-    const result = await updateMealPlan("household-B", "plan-of-A", { status: "ARCHIVED" });
-    expect(result).toBeNull();
+    const result = await updateMealPlan("household-B", "plan-of-A", { status: "ARCHIVED" }, "2026-09-21");
+    expect(result).toEqual({ ok: false, error: "NOT_FOUND" });
+    expect(mealPlanFindFirst).toHaveBeenCalledWith({ where: { id: "plan-of-A", householdId: "household-B" } });
     expect(mealPlanUpdate).not.toHaveBeenCalled();
   });
 
-  it("aktualisiert nur die übergebenen Felder", async () => {
-    mealPlanFindFirst.mockResolvedValueOnce({ id: "plan-1" });
-    mealPlanUpdate.mockResolvedValueOnce({ id: "plan-1", status: "ARCHIVED" });
-    await updateMealPlan("household-A", "plan-1", { status: "ARCHIVED" });
-    expect(mealPlanUpdate).toHaveBeenCalledWith({ where: { id: "plan-1" }, data: { status: "ARCHIVED" } });
+  it("ändert ohne Statuswechsel nur den Namen", async () => {
+    mealPlanFindFirst.mockResolvedValueOnce({ id: "plan-1", status: "DRAFT" });
+    mealPlanUpdate.mockResolvedValueOnce({ id: "plan-1", name: "Neu", status: "DRAFT" });
+    const result = await updateMealPlan("household-A", "plan-1", { name: "Neu" }, "2026-09-21");
+    expect(result).toEqual({ ok: true, plan: { id: "plan-1", name: "Neu", status: "DRAFT" }, archivedPlanIds: [] });
+    expect(mealPlanUpdate).toHaveBeenCalledWith({ where: { id: "plan-1" }, data: { name: "Neu" } });
   });
 });
 
 describe("deleteMealPlan: Authorization", () => {
   it("löscht nur, wenn id und householdId gemeinsam matchen", async () => {
     mealPlanDeleteMany.mockResolvedValueOnce({ count: 0 });
-    const result = await deleteMealPlan("household-B", "plan-of-A");
-    expect(result).toBe(false);
-    expect(mealPlanDeleteMany).toHaveBeenCalledWith({ where: { id: "plan-of-A", householdId: "household-B" } });
+    mealPlanFindFirst.mockResolvedValueOnce(null);
+    const result = await deleteMealPlan("household-B", "plan-of-A", "2026-10-01");
+    expect(result).toEqual({ ok: false, error: "NOT_FOUND" });
+    expect(mealPlanDeleteMany).toHaveBeenCalledWith({
+      where: { id: "plan-of-A", householdId: "household-B", status: "DRAFT", startDate: { gte: new Date("2026-10-01T00:00:00.000Z") } },
+    });
   });
 });

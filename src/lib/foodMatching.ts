@@ -1,3 +1,4 @@
+import type { DietType } from "@prisma/client";
 import { recipeBlockedByAllergies } from "./recipes/allergens";
 import type { FoodCatalog } from "./recipes/catalog";
 
@@ -22,6 +23,23 @@ export function matchesAllergen(
   catalog?: FoodCatalog,
 ): boolean {
   return recipeBlockedByAllergies(recipeAllergens, profileAllergies, ingredientLines, catalog);
+}
+
+/**
+ * Darf das Rezept diesem Profil überhaupt vorgeschlagen werden? Die harten Profilregeln ohne Kontext
+ * einer Nachricht: Die Ernährungsform passt, und keine Allergie des Profils trifft das Rezept
+ * (`matchesAllergen`). Gemeinsame Regel für den persönlichen Planer und die Insights (R5F-9);
+ * `checkHardConstraints` (agents/decision) prüft dieselben zwei Regeln plus ausgeschlossene Zutaten
+ * einzeln, um jeden Verstoß zu benennen. Die Ernährungsform wird zuerst geprüft, damit die
+ * aufwendigere Allergen-Prüfung nur für passende Rezepte läuft.
+ */
+export function fitsProfileHardRules(
+  recipe: { dietTypes: DietType[]; allergens: string[]; ingredients: string[] },
+  profile: { dietType: DietType; allergies: string[] },
+  catalog?: FoodCatalog,
+): boolean {
+  if (!recipe.dietTypes.includes(profile.dietType)) return false;
+  return !matchesAllergen(recipe.allergens, profile.allergies, recipe.ingredients, catalog);
 }
 
 /** Enthält eine der Zutaten-Zeilen den gesuchten Begriff (z.B. "gurke" in "2 Salatgurken")? */
@@ -52,6 +70,13 @@ export function macroProfile(kcal: number, proteinG: number, carbsG: number, fat
   };
 }
 
+/**
+ * Gemeinsame Grenzen der Portionsskalierung für Planer (persönlich und Haushalt) und Decision Engine:
+ * höchstens 0,4x bis 2,5x des Basisrezepts. Macro Rescue (PORTION_BOUNDS) und die Größenänderung
+ * im Recipe Transformer haben bewusst eigene Grenzen.
+ */
+export const PORTION_SCALE_BOUNDS = { min: 0.4, max: 2.5 } as const;
+
 interface MacroVector {
   kcal: number;
   proteinG: number;
@@ -62,12 +87,12 @@ interface MacroVector {
 /**
  * Skaliert EIN Rezept so, dass es im Mittel über alle vier Makros möglichst
  * nah an ein Ziel kommt (1D-Least-Squares: s* = Σmₖ / Σmₖ², mₖ = Rezept/Ziel).
- * Genutzt z.B. von Macro Rescue, um eine sinnvolle Portionsgröße vorzuschlagen.
+ * Genutzt von der Decision Engine, um eine sinnvolle Portionsgröße vorzuschlagen.
  */
 export function computeSingleItemScale(
   target: MacroVector,
   recipe: MacroVector,
-  bounds: [number, number] = [0.4, 2.5],
+  bounds: [number, number] = [PORTION_SCALE_BOUNDS.min, PORTION_SCALE_BOUNDS.max],
 ): number {
   const keys = ["kcal", "proteinG", "carbsG", "fatG"] as const;
   let numerator = 0;

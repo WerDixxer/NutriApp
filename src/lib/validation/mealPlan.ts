@@ -1,3 +1,4 @@
+import { MealPlanStatus } from "@prisma/client";
 import { z } from "zod";
 import { calendarDateSchema } from "./calendarDate";
 
@@ -25,7 +26,8 @@ export const generateMealPlanSchema = z.object({
 
 export const updateMealPlanSchema = z.object({
   name: z.string().trim().max(80).optional(),
-  status: z.enum(["DRAFT", "ACTIVE", "ARCHIVED"]).optional(),
+  // Werte aus dem Prisma-Enum; welche Übergänge erlaubt sind, regelt mealPlanner/planLifecycle.ts.
+  status: z.enum(MealPlanStatus).optional(),
 });
 
 export type GenerateMealPlanInput = z.infer<typeof generateMealPlanSchema>;

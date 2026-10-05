@@ -7,6 +7,7 @@ import { RecipeDetailModal, RecipeThumb, type RecipeDetail } from "@/components/
 import { Pill } from "@/components/ui/Pill";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { approxGrams, approxKcal } from "@/lib/format";
+import { loadTrendTags, saveTrendTags } from "./trendTagRequests";
 
 export default function TrendsGrid({ recipes }: { recipes: RecipeDetail[] }) {
   const allTags = useMemo(() => {
@@ -16,26 +17,45 @@ export default function TrendsGrid({ recipes }: { recipes: RecipeDetail[] }) {
   }, [recipes]);
 
   const [selected, setSelected] = useState<string[]>([]);
-  const [loaded, setLoaded] = useState(false);
+  // Gespeichert wird immer die vollständige Liste: nur nach erfolgreichem Laden, nie parallel (R5F-3).
+  const [tagsStatus, setTagsStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [saving, setSaving] = useState(false);
+  const [tagError, setTagError] = useState<string | null>(null);
+  const canChangeTags = tagsStatus === "ready" && !saving;
 
   useEffect(() => {
-    fetch("/api/profile")
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.profile?.subscribedTrendTags) setSelected(data.profile.subscribedTrendTags);
-      })
-      .catch(() => {})
-      .finally(() => setLoaded(true));
+    let active = true;
+    void loadTrendTags().then((result) => {
+      if (!active) return;
+      if (result.ok) {
+        setSelected(result.tags);
+        setTagsStatus("ready");
+      } else {
+        setTagError(result.message);
+        setTagsStatus("error");
+      }
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
-  function toggleTag(tag: string) {
-    const next = selected.includes(tag) ? selected.filter((t) => t !== tag) : [...selected, tag];
+  /** Übernimmt die neue Auswahl erst, wenn der Server sie gespeichert hat. */
+  async function changeTags(next: string[]) {
+    if (!canChangeTags) return;
+    setSaving(true);
+    setTagError(null);
+    const result = await saveTrendTags(next);
+    setSaving(false);
+    if (!result.ok) {
+      setTagError(result.message);
+      return;
+    }
     setSelected(next);
-    fetch("/api/profile/trend-tags", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tags: next }),
-    }).catch(() => {});
+  }
+
+  function toggleTag(tag: string) {
+    void changeTags(selected.includes(tag) ? selected.filter((t) => t !== tag) : [...selected, tag]);
   }
 
   const visible =
@@ -49,20 +69,14 @@ export default function TrendsGrid({ recipes }: { recipes: RecipeDetail[] }) {
         <div className="-mx-1 flex flex-wrap items-center gap-2 overflow-x-auto border-b border-border px-1 pb-6">
           <span className="text-label mr-1 text-ink-faint">Feed filtern</span>
           {allTags.map((tag) => (
-            <Pill key={tag} active={selected.includes(tag)} onClick={() => toggleTag(tag)} className="h-8 px-3.5 text-xs">
+            <Pill key={tag} active={selected.includes(tag)} onClick={() => toggleTag(tag)} disabled={!canChangeTags} className="h-8 px-3.5 text-xs">
               #{tag}
             </Pill>
           ))}
           {selected.length > 0 && (
             <button
-              onClick={() => {
-                setSelected([]);
-                fetch("/api/profile/trend-tags", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ tags: [] }),
-                }).catch(() => {});
-              }}
+              onClick={() => void changeTags([])}
+              disabled={!canChangeTags}
               className="text-xs font-medium text-ink-soft underline underline-offset-2 transition-colors duration-[var(--duration-fast)] hover:text-primary"
             >
               zurücksetzen
@@ -71,7 +85,13 @@ export default function TrendsGrid({ recipes }: { recipes: RecipeDetail[] }) {
         </div>
       )}
 
-      {loaded && visible.length === 0 && (
+      {tagError && (
+        <p role="alert" className="text-[13.5px] font-semibold text-danger">
+          {tagError}
+        </p>
+      )}
+
+      {tagsStatus !== "loading" && visible.length === 0 && (
         <EmptyState
           title="Keine Trends mit diesen Tags"
           description="Wähle einen anderen Tag oder setze den Filter zurück."

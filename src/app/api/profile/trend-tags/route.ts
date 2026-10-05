@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { requireApiProfileId } from "@/lib/apiProfile";
 import { getApiUserId } from "@/lib/session";
 import { trendTagsPayloadSchema } from "@/lib/validation/profile";
 import { firstZodIssue } from "@/lib/validation/zodError";
@@ -17,13 +18,12 @@ export async function POST(request: Request) {
   }
   const { tags } = parsed.data;
 
-  const profile = await prisma.profile.findUnique({ where: { userId } });
-  if (!profile) {
-    return NextResponse.json({ error: "Kein Profil vorhanden." }, { status: 404 });
-  }
+  const lookup = await requireApiProfileId(userId);
+  if (!lookup.ok) return lookup.response;
+  const profileId = lookup.profileId;
 
   await prisma.profile.update({
-    where: { id: profile.id },
+    where: { id: profileId },
     data: { subscribedTrendTags: JSON.stringify(tags) },
   });
 

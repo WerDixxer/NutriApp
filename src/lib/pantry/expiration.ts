@@ -1,3 +1,5 @@
+import { daysBetween, fromDbDate, todayForUser } from "../calendarDate";
+
 export interface ExpirationStatus {
   /** null, solange kein Ablaufdatum bekannt ist. */
   daysUntilExpiration: number | null;
@@ -7,25 +9,22 @@ export interface ExpirationStatus {
 
 const EXPIRING_SOON_THRESHOLD_DAYS = 2;
 
-function startOfDay(date: Date): Date {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
 /**
  * Reine Funktion, unabhängig davon, ob das Datum `EXACT` oder `ESTIMATED`
  * ist (das entscheidet nur, wie die UI es beschriftet, siehe
  * `ExpirationDateType`). Bei `null` (kein/`UNKNOWN`-Datum) wird nichts
  * erfunden, alle Flags bleiben neutral `false`.
+ *
+ * Das Ablaufdatum ist ein Kalendertag, gespeichert als UTC-Mitternacht (wie `toDbDate`); "heute" ist der
+ * Kalendertag des Nutzers (`todayForUser`, Europe/Berlin). Gezählt werden Kalendertage dazwischen -
+ * unabhängig von der Zeitzone des Servers.
  */
 export function getExpirationStatus(expirationDate: Date | null, now: Date = new Date()): ExpirationStatus {
   if (!expirationDate) {
     return { daysUntilExpiration: null, isExpired: false, isExpiringSoon: false };
   }
 
-  const msPerDay = 1000 * 60 * 60 * 24;
-  const days = Math.round((startOfDay(expirationDate).getTime() - startOfDay(now).getTime()) / msPerDay);
+  const days = daysBetween(todayForUser(now), fromDbDate(expirationDate));
 
   return {
     daysUntilExpiration: days,

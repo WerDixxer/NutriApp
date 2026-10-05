@@ -10,6 +10,7 @@ import { InsightsPanel, type InsightView } from "@/components/insights/InsightsP
 import { SLOT_LABELS } from "@/lib/labels";
 import { approxGrams, approxKcal } from "@/lib/format";
 import type { CalendarDate } from "@/lib/calendarDate";
+import { createLogEntry, deleteLogEntry } from "./logRequests";
 
 export interface PlanItemView {
   id: string;
@@ -165,6 +166,7 @@ export default function DashboardClient({
 }) {
   const [entries, setEntries] = useState<LogEntryView[]>(initialEntries);
   const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [logError, setLogError] = useState<string | null>(null);
 
   const consumed = entries.reduce(
     (acc, e) => ({
@@ -189,28 +191,29 @@ export default function DashboardClient({
     )[0];
   }, [initialPlanItems, entryBySlot]);
 
+  // Als geloggt bzw. entfernt gilt eine Mahlzeit erst nach bestätigter Serverantwort (R5F-2).
   async function logMeal(item: PlanItemView) {
     setLoadingId(item.id);
+    setLogError(null);
     try {
-      const res = await fetch("/api/log", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          date,
-          slot: item.slot,
-          recipeId: item.recipe.id,
-          customName: item.recipe.name,
-          kcal: item.recipe.kcal,
-          proteinG: item.recipe.proteinG,
-          carbsG: item.recipe.carbsG,
-          fatG: item.recipe.fatG,
-        }),
+      const result = await createLogEntry({
+        date,
+        slot: item.slot,
+        recipeId: item.recipe.id,
+        customName: item.recipe.name,
+        kcal: item.recipe.kcal,
+        proteinG: item.recipe.proteinG,
+        carbsG: item.recipe.carbsG,
+        fatG: item.recipe.fatG,
       });
-      const data = await res.json();
+      if (!result.ok) {
+        setLogError(result.message);
+        return;
+      }
       setEntries((prev) => [
         ...prev,
         {
-          id: data.entry.id,
+          id: result.entryId,
           slot: item.slot,
           name: item.recipe.name,
           kcal: item.recipe.kcal,
@@ -225,8 +228,13 @@ export default function DashboardClient({
   }
 
   async function removeEntry(id: string) {
+    setLogError(null);
+    const result = await deleteLogEntry(id);
+    if (!result.ok) {
+      setLogError(result.message);
+      return;
+    }
     setEntries((prev) => prev.filter((e) => e.id !== id));
-    await fetch(`/api/log?id=${id}`, { method: "DELETE" });
   }
 
   async function toggleMeal(item: PlanItemView) {
@@ -325,6 +333,11 @@ export default function DashboardClient({
             {initialPlanItems.length} {initialPlanItems.length === 1 ? "Mahlzeit" : "Mahlzeiten"}
           </span>
         </div>
+        {logError && (
+          <p role="alert" className="mb-4 text-[13.5px] font-semibold text-danger">
+            {logError}
+          </p>
+        )}
         {initialPlanItems.length === 0 ? (
           <EmptyState
             title="Noch kein Plan für heute"

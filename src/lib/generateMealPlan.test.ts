@@ -16,6 +16,10 @@ interface StoredDay {
   id: string;
   profileId: string;
   date: Date;
+  targetKcal?: number;
+  targetProteinG?: number;
+  targetCarbsG?: number;
+  targetFatG?: number;
   items: StoredItem[];
 }
 interface FakeRecipe {
@@ -63,12 +67,16 @@ vi.mock("./db", () => ({
         store.find((d) => d.profileId === where.profileId_date.profileId && d.date.getTime() === where.profileId_date.date.getTime()) ?? null,
       findMany: async ({ where }: { where: { profileId: string; date: { gte: Date; lte: Date } } }) =>
         store.filter((d) => d.profileId === where.profileId && d.date >= where.date.gte && d.date <= where.date.lte),
-      create: async ({ data }: { data: { profileId: string; date: Date; items: { create: Omit<StoredItem, "id" | "recipe">[] } } }) => {
+      create: async ({ data }: { data: Omit<StoredDay, "id" | "items"> & { items: { create: Omit<StoredItem, "id" | "recipe">[] } } }) => {
         createdDays.push(fromDbDate(data.date));
         const day: StoredDay = {
           id: `day-${++idCounter}`,
           profileId: data.profileId,
           date: data.date,
+          targetKcal: data.targetKcal,
+          targetProteinG: data.targetProteinG,
+          targetCarbsG: data.targetCarbsG,
+          targetFatG: data.targetFatG,
           items: data.items.create.map((item) => ({
             id: `item-${++idCounter}`,
             ...item,
@@ -456,6 +464,18 @@ describe("Allergien im persönlichen Plan (Regression: 'Erdnüsse' vs. Allergen 
     expect(plans.items.some((i) => i.recipeId === "l-erdnuss")).toBe(false);
   });
 
+  it("ein Rezept, das nicht zur Ernährungsform passt, wird nie geplant - auch als Lieblingsrezept (R5F-9)", async () => {
+    const both = JSON.stringify(["OMNIVORE", "VEGAN"]);
+    recipes = [
+      ...recipes.filter((r) => !r.id.startsWith("l-")).map((r) => ({ ...r, dietTypes: both })),
+      fakeRecipe("l-omnivor", "LUNCH", { ingredients: JSON.stringify(["50 g Erdnussbutter"]) }),
+      fakeRecipe("l-vegan", "LUNCH", { dietTypes: both }),
+    ];
+    profile = baseProfile({ dietType: "VEGAN", likedFoods: [{ label: "Erdnussbutter" }] });
+    const plans = await editableWeekPlan(MONDAY);
+    expect(slotRecipeIds(plans, "LUNCH")).toEqual(Array(7).fill("l-vegan"));
+  });
+
   it("lässt bei einer unbekannten Allergie ein Rezept mit dem Begriff in den Zutaten nicht durch", async () => {
     recipes = [
       ...recipes.filter((r) => !r.id.startsWith("l-")),
@@ -612,5 +632,82 @@ describe("Rezept-Snapshot (R5E)", () => {
       // Die Menge steht allein im Portionsfaktor; der Snapshot bleibt der Basiswert je Portion.
       expect(stored.portionMultiplier).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("Charakterisierung: Planergebnisse bleiben durch R5F-11 unverändert", () => {
+  const INGREDIENTS = ["200 g Hähnchen", "100 g Reis", "150 g Pilze", "50 g Erdnüsse", "200 g Tofu"];
+  const SLOTS = ["BREAKFAST", "SNACK", "LUNCH", "DINNER", "PRE_WORKOUT", "POST_WORKOUT"];
+
+  /** Rezepte mit unterschiedlichen Makros und Zutaten je Slot - damit Auswahl, Variety und Skalierung wirklich arbeiten. */
+  function variedRecipes(): FakeRecipe[] {
+    return SLOTS.flatMap((slot, s) =>
+      Array.from({ length: 5 }, (_, i) =>
+        fakeRecipe(`${slot.toLowerCase()}-${i}`, slot, {
+          kcal: 300 + ((i + s) % 5) * 70,
+          proteinG: 15 + ((i * 3 + s) % 5) * 6,
+          carbsG: 40 + ((i + 2 * s) % 3) * 12,
+          fatG: 8 + ((i + s) % 4) * 4,
+          ingredients: JSON.stringify([INGREDIENTS[(i + s) % INGREDIENTS.length], "1 Prise Salz"]),
+        }),
+      ),
+    );
+  }
+
+  /** Mit dem Stand vor R5F-11 erzeugt (Pläne je Tag: Datum, Tagesziele, Mahlzeiten mit Slot, Uhrzeit, Rezept, Portion). */
+  const EXPECTED = {
+    wednesday: {"date": "2026-09-16", "targets": [2209, 160, 226, 74], "items": [["BREAKFAST", "08:00", "breakfast-0", 1.0309978917198999], ["SNACK", "10:30", "snack-4", 1.2566094568380597], ["LUNCH", "13:00", "lunch-3", 1.002268863192137], ["SNACK", "16:00", "snack-3", 0.4], ["DINNER", "19:30", "dinner-3", 2.225276977586019]]},
+    week1: [
+      {"date": "2026-09-14", "targets": [2209, 160, 226, 74], "items": [["BREAKFAST", "08:00", "breakfast-0", 1.610463302828128], ["SNACK", "10:30", "snack-4", 1.6720756488186987], ["LUNCH", "13:00", "lunch-3", 1.4753175347013257], ["PRE_WORKOUT", "15:30", "pre_workout-1", 1.1572416793324711], ["POST_WORKOUT", "19:30", "post_workout-0", 0.4]]},
+      {"date": "2026-09-15", "targets": [2209, 160, 226, 74], "items": [["BREAKFAST", "08:00", "breakfast-0", 1.0309978917198999], ["SNACK", "10:30", "snack-4", 1.2566094568380597], ["LUNCH", "13:00", "lunch-3", 1.002268863192137], ["SNACK", "16:00", "snack-3", 0.4], ["DINNER", "19:30", "dinner-3", 2.225276977586019]]},
+      {"date": "2026-09-16", "targets": [2209, 160, 226, 74], "items": [["BREAKFAST", "08:00", "breakfast-0", 1.0309978917198999], ["SNACK", "10:30", "snack-4", 1.2566094568380597], ["LUNCH", "13:00", "lunch-3", 1.002268863192137], ["SNACK", "16:00", "snack-3", 0.4], ["DINNER", "19:30", "dinner-3", 2.225276977586019]]},
+      {"date": "2026-09-17", "targets": [2209, 160, 226, 74], "items": [["PRE_WORKOUT", "04:30", "pre_workout-1", 0.7875737602763973], ["POST_WORKOUT", "08:15", "post_workout-0", 0.4], ["SNACK", "10:30", "snack-4", 1.0549688290591972], ["LUNCH", "13:00", "lunch-3", 1.0201980436810874], ["SNACK", "16:00", "snack-0", 0.4], ["DINNER", "19:30", "dinner-3", 2.083772417094376]]},
+      {"date": "2026-09-18", "targets": [2209, 160, 226, 74], "items": [["BREAKFAST", "08:00", "breakfast-0", 1.0309978917198999], ["SNACK", "10:30", "snack-4", 1.2566094568380597], ["LUNCH", "13:00", "lunch-3", 1.002268863192137], ["SNACK", "16:00", "snack-3", 0.4], ["DINNER", "19:30", "dinner-3", 2.225276977586019]]},
+      {"date": "2026-09-19", "targets": [2209, 160, 226, 74], "items": [["BREAKFAST", "08:00", "breakfast-0", 1.7175553486614201], ["PRE_WORKOUT", "09:30", "pre_workout-1", 1.2613360975925167], ["POST_WORKOUT", "14:00", "post_workout-4", 0.5332844374442827], ["SNACK", "16:00", "snack-4", 1.452502290124607], ["DINNER", "19:30", "dinner-2", 0.94004626728614]]},
+      {"date": "2026-09-20", "targets": [2209, 160, 226, 74], "items": [["BREAKFAST", "08:00", "breakfast-0", 1.0309978917198999], ["SNACK", "10:30", "snack-4", 1.2566094568380597], ["LUNCH", "13:00", "lunch-3", 1.002268863192137], ["SNACK", "16:00", "snack-3", 0.4], ["DINNER", "19:30", "dinner-3", 2.225276977586019]]},
+    ],
+    week2: [
+      {"date": "2026-09-21", "targets": [2209, 160, 226, 74], "items": [["BREAKFAST", "08:00", "breakfast-0", 1.610463302828128], ["SNACK", "10:30", "snack-4", 1.6720756488186987], ["LUNCH", "13:00", "lunch-3", 1.4753175347013257], ["PRE_WORKOUT", "15:30", "pre_workout-1", 1.1572416793324711], ["POST_WORKOUT", "19:30", "post_workout-0", 0.4]]},
+      {"date": "2026-09-22", "targets": [2209, 160, 226, 74], "items": [["BREAKFAST", "08:00", "breakfast-0", 1.0309978917198999], ["SNACK", "10:30", "snack-4", 1.2566094568380597], ["LUNCH", "13:00", "lunch-3", 1.002268863192137], ["SNACK", "16:00", "snack-3", 0.4], ["DINNER", "19:30", "dinner-3", 2.225276977586019]]},
+      {"date": "2026-09-23", "targets": [2209, 160, 226, 74], "items": [["BREAKFAST", "08:00", "breakfast-0", 1.0309978917198999], ["SNACK", "10:30", "snack-4", 1.2566094568380597], ["LUNCH", "13:00", "lunch-3", 1.002268863192137], ["SNACK", "16:00", "snack-3", 0.4], ["DINNER", "19:30", "dinner-3", 2.225276977586019]]},
+      {"date": "2026-09-24", "targets": [2209, 160, 226, 74], "items": [["PRE_WORKOUT", "04:30", "pre_workout-1", 0.7875737602763973], ["POST_WORKOUT", "08:15", "post_workout-0", 0.4], ["SNACK", "10:30", "snack-4", 1.0549688290591972], ["LUNCH", "13:00", "lunch-3", 1.0201980436810874], ["SNACK", "16:00", "snack-0", 0.4], ["DINNER", "19:30", "dinner-3", 2.083772417094376]]},
+      {"date": "2026-09-25", "targets": [2209, 160, 226, 74], "items": [["BREAKFAST", "08:00", "breakfast-0", 1.0309978917198999], ["SNACK", "10:30", "snack-4", 1.2566094568380597], ["LUNCH", "13:00", "lunch-3", 1.002268863192137], ["SNACK", "16:00", "snack-3", 0.4], ["DINNER", "19:30", "dinner-3", 2.225276977586019]]},
+      {"date": "2026-09-26", "targets": [2209, 160, 226, 74], "items": [["BREAKFAST", "08:00", "breakfast-0", 1.7175553486614201], ["PRE_WORKOUT", "09:30", "pre_workout-1", 1.2613360975925167], ["POST_WORKOUT", "14:00", "post_workout-4", 0.5332844374442827], ["SNACK", "16:00", "snack-4", 1.452502290124607], ["DINNER", "19:30", "dinner-2", 0.94004626728614]]},
+      {"date": "2026-09-27", "targets": [2209, 160, 226, 74], "items": [["BREAKFAST", "08:00", "breakfast-0", 1.0309978917198999], ["SNACK", "10:30", "snack-4", 1.2566094568380597], ["LUNCH", "13:00", "lunch-3", 1.002268863192137], ["SNACK", "16:00", "snack-3", 0.4], ["DINNER", "19:30", "dinner-3", 2.225276977586019]]},
+    ],
+  };
+
+  type PlanLike = Awaited<ReturnType<typeof editableDayPlan>> | null;
+  function summary(plan: PlanLike) {
+    if (!plan) return null;
+    return {
+      date: fromDbDate(plan.date),
+      targets: [plan.targetKcal, plan.targetProteinG, plan.targetCarbsG, plan.targetFatG],
+      items: plan.items.map((item) => [item.slot, item.time, item.recipeId, item.portionMultiplier]),
+    };
+  }
+
+  it("liefert für Training, Vorlieben, Abneigungen, Allergie und zwei Wochen (Einzeltag und Woche) dieselben Pläne", async () => {
+    recipes = variedRecipes();
+    profile = baseProfile({
+      sportType: "STRENGTH",
+      goal: "LOSE_WEIGHT",
+      goalRateKgPerWeek: 0.5,
+      likedFoods: [{ label: "Hähnchen" }],
+      dislikedFoods: [{ label: "Pilze" }],
+      allergies: [{ label: "Erdnüsse" }],
+      trainingSessions: [
+        { weekday: 0, startTime: "18:00", durationMin: 60, sportType: "STRENGTH" },
+        { weekday: 3, startTime: "07:00", durationMin: 45, sportType: "ENDURANCE" },
+        { weekday: 5, startTime: "12:00", durationMin: 90, sportType: "MIXED" },
+      ],
+    });
+
+    // Dashboard-Weg: ein einzelner Tag zuerst, danach die Woche (zählt ihn für die Abwechslung mit).
+    const wednesday = await editableDayPlan(addDays(MONDAY, 2));
+    const week1 = await editableWeekPlan(MONDAY);
+    const week2 = await editableWeekPlan(addDays(MONDAY, 7));
+
+    expect({ wednesday: summary(wednesday), week1: week1.map(summary), week2: week2.map(summary) }).toEqual(EXPECTED);
   });
 });

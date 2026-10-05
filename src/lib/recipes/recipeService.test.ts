@@ -17,6 +17,7 @@ vi.mock("../db", () => ({
 }));
 
 const { analyzeRecipesForProfile, loadCatalogRecipes, loadFoodCatalog, loadStructuredIngredients, toPersonalizationInput } = await import("./recipeService");
+const { deriveDietClass } = await import("./diet");
 
 function foodRow(id: string, name: string, kcal: number | null, extra: Record<string, unknown> = {}) {
   return {
@@ -114,6 +115,44 @@ describe("loadFoodCatalog", () => {
       expect.stringContaining('Ingredient db-kaputt: Spalte "unitGrams" hat nicht die erwartete Form'),
     ]);
     warn.mockRestore();
+  });
+});
+
+describe("loadFoodCatalog: dietClass aus der String-Spalte (L-2)", () => {
+  it.each(["vegan", "vegetarian", "pescatarian", "omnivore"])("übernimmt den gültigen Wert %s unverändert", async (dietClass) => {
+    ingredientFindMany.mockResolvedValue([foodRow("db-x", "Testfood", 50, { dietClass })]);
+    const catalog = await loadFoodCatalog();
+    expect(catalog.get("db-x")?.dietClass).toBe(dietClass);
+  });
+
+  it("ohne Wert gilt das Food wie bisher als omnivore, ohne Warnung", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    ingredientFindMany.mockResolvedValue([foodRow("db-x", "Testfood", 50, { dietClass: null })]);
+    const catalog = await loadFoodCatalog();
+    expect(catalog.get("db-x")?.dietClass).toBe("omnivore");
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it.each(["Vegan", "VEGAN", "fleisch", ""])("ein unbekannter Wert (%j) gilt konservativ als omnivore und wird gemeldet", async (dietClass) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    ingredientFindMany.mockResolvedValue([foodRow("db-x", "Testfood", 50, { dietClass })]);
+    const catalog = await loadFoodCatalog();
+    expect(catalog.get("db-x")?.dietClass).toBe("omnivore");
+    expect(warn.mock.calls.map(([message]) => message)).toEqual([expect.stringContaining(`Ingredient db-x: unbekannte dietClass "${dietClass}"`)]);
+    warn.mockRestore();
+  });
+
+  it("ein Food mit unbekanntem Wert macht ein Rezept nicht vegan (vorher: Food zählte gar nicht)", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    ingredientFindMany.mockResolvedValue([
+      foodRow("db-tofu", "Tofu", 120, { dietClass: "vegan" }),
+      foodRow("db-speck", "Speck", 500, { dietClass: "Fleisch" }),
+    ]);
+    const catalog = await loadFoodCatalog();
+    const ingredients = ["db-tofu", "db-speck"].map((foodId, position) => ({ position, foodId, displayName: foodId, amount: 100, unit: "g" as const, optional: false }));
+    expect(deriveDietClass(ingredients, catalog)).toBe("omnivore");
+    vi.restoreAllMocks();
   });
 });
 

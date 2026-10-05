@@ -42,7 +42,13 @@ import { formatIngredientLine } from "./units";
 // 1. Raw Import: was die externe Quelle liefert, unverändert (Abschnitt 2/3)
 // ---------------------------------------------------------------------------
 
-export type ImportSourceType = "mock" | "manual" | "external_api" | "social_media";
+export const IMPORT_SOURCE_TYPES = ["mock", "manual", "external_api", "social_media"] as const;
+export type ImportSourceType = (typeof IMPORT_SOURCE_TYPES)[number];
+
+/** Für Werte aus der Datenbank (RecipeImportCandidate.sourceType ist eine String-Spalte). */
+export function isImportSourceType(value: string): value is ImportSourceType {
+  return (IMPORT_SOURCE_TYPES as readonly string[]).includes(value);
+}
 
 export interface ImportSource {
   type: ImportSourceType;

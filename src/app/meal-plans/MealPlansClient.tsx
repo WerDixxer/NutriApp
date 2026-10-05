@@ -277,9 +277,11 @@ export default function MealPlansClient({
 
       const mapped = mapApiPlanToDetail(data.plan);
       setDetail(mapped);
+      // Ein aktiv erzeugter Plan archiviert überschneidende aktive Pläne (planLifecycle.ts); die Liste zieht das nach.
+      const archivedIds = new Set<string>(data.archivedPlanIds ?? []);
       setPlanList((prev) => [
         { id: mapped.id, name: mapped.name, startDate: mapped.startDate, endDate: mapped.endDate, status: mapped.status, mealCount: mapped.meals.length },
-        ...prev,
+        ...prev.map((p) => (archivedIds.has(p.id) ? { ...p, status: "ARCHIVED" as const } : p)),
       ]);
       setShowForm(false);
       if (data.status === "PARTIAL") {

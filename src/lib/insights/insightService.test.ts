@@ -90,6 +90,12 @@ describe("getInsightsForProfile: Rezeptvorschläge und Allergien (F-03)", () => 
     expect(insights.map((i) => i.type)).toContain("RECIPE_MATCHES_AVAILABLE_PANTRY");
   });
 
+  it("ein Rezept, das nicht zur Ernährungsform passt, wird nicht vorgeschlagen (R5F-9)", async () => {
+    profileFindUnique.mockResolvedValue({ ...baseProfile, dietType: "VEGAN" });
+    const insights = await getInsightsForProfile("profile-1", now);
+    expect(insights.map((i) => i.type)).not.toContain("RECIPE_MATCHES_AVAILABLE_PANTRY");
+  });
+
   it("bei Milchallergie wird das Skyr-Rezept ohne Allergen-Angabe nicht vorgeschlagen", async () => {
     profileFindUnique.mockResolvedValue({ ...baseProfile, allergies: [{ label: "Milch" }] });
     const insights = await getInsightsForProfile("profile-1", now);

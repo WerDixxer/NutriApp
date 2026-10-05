@@ -1,6 +1,6 @@
 import type { MealSlot, SportType } from "@prisma/client";
 import type { MacroTarget } from "./nutrition";
-import { macroProfile } from "./foodMatching";
+import { PORTION_SCALE_BOUNDS, macroProfile } from "./foodMatching";
 
 export interface TrainingSessionInput {
   startTime: string; // "HH:mm"
@@ -269,8 +269,7 @@ export function selectRecipeForSlot(
   return best?.recipe ?? null;
 }
 
-const MIN_PORTION_SCALE = 0.4;
-const MAX_PORTION_SCALE = 2.5;
+const { min: MIN_PORTION_SCALE, max: MAX_PORTION_SCALE } = PORTION_SCALE_BOUNDS;
 
 /** Löst ein n×n-Gleichungssystem A·x = b per Gauß-Jordan (n ist klein, ≤ 8 Slots/Tag). */
 function solveLinearSystem(A: number[][], b: number[]): number[] {

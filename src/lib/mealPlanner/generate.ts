@@ -19,7 +19,9 @@ export interface GenerateMealPlanRequest {
 
 export interface GenerateMealPlanResult {
   status: MealPlanGenerationStatus;
-  plan: Awaited<ReturnType<typeof createMealPlan>> | null;
+  plan: Awaited<ReturnType<typeof createMealPlan>>["plan"] | null;
+  /** Durch die Aktivierung archivierte, überschneidende ACTIVE-Pläne (planLifecycle.ts). */
+  archivedPlanIds: string[];
   unmetSlots: UnmetSlot[];
   validationErrors: string[];
 }
@@ -35,14 +37,14 @@ export async function generateAndSaveMealPlan(request: GenerateMealPlanRequest, 
   const context = await buildPlanningContext(request.householdId, request.householdMemberIds, now);
 
   if (context.members.length === 0) {
-    return { status: "NO_VALID_PLAN", plan: null, unmetSlots: [], validationErrors: ["Kein gültiges Haushaltsmitglied mit vollständigem Profil gefunden."] };
+    return { status: "NO_VALID_PLAN", plan: null, archivedPlanIds: [], unmetSlots: [], validationErrors: ["Kein gültiges Haushaltsmitglied mit vollständigem Profil gefunden."] };
   }
 
   const planningInput = { startDate: request.startDate, days: request.days, slots: request.slots, maxCookingTimeMin: request.maxCookingTimeMin };
   const generated = generateMealPlan(context, planningInput, now);
 
   if (generated.status === "NO_VALID_PLAN") {
-    return { status: "NO_VALID_PLAN", plan: null, unmetSlots: generated.unmetSlots, validationErrors: [] };
+    return { status: "NO_VALID_PLAN", plan: null, archivedPlanIds: [], unmetSlots: generated.unmetSlots, validationErrors: [] };
   }
 
   const validationErrors = validateGeneratedPlan(generated, context, planningInput);
@@ -52,12 +54,13 @@ export async function generateAndSaveMealPlan(request: GenerateMealPlanRequest, 
     return {
       status: "NO_VALID_PLAN",
       plan: null,
+      archivedPlanIds: [],
       unmetSlots: generated.unmetSlots,
       validationErrors: validationErrors.map((e) => e.message),
     };
   }
 
-  const plan = await createMealPlan(request.householdId, {
+  const { plan, archivedPlanIds } = await createMealPlan(request.householdId, {
     name: request.name,
     startDate: request.startDate,
     endDate: addDays(request.startDate, request.days - 1),
@@ -66,5 +69,5 @@ export async function generateAndSaveMealPlan(request: GenerateMealPlanRequest, 
     status: generated.status === "SUCCESS" ? "ACTIVE" : "DRAFT",
   });
 
-  return { status: generated.status, plan, unmetSlots: generated.unmetSlots, validationErrors: [] };
+  return { status: generated.status, plan, archivedPlanIds, unmetSlots: generated.unmetSlots, validationErrors: [] };
 }

@@ -6,6 +6,7 @@ import { Plus, Trash2, UserRound } from "lucide-react";
 import { Input, Select } from "@/components/ui/Field";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
+import { revokeInvite } from "./householdRequests";
 
 export interface HouseholdView {
   id: string;
@@ -118,9 +119,15 @@ export default function HouseholdClient({
     }
   }
 
+  // Die Einladung verschwindet erst nach Bestätigung des Servers (R5F-3).
   async function handleRevokeInvite(id: string) {
+    setError(null);
+    const result = await revokeInvite(id);
+    if (!result.ok) {
+      setError(result.message);
+      return;
+    }
     setInvites((prev) => prev.filter((i) => i.id !== id));
-    await fetch(`/api/household/invites/${id}`, { method: "DELETE" }).catch(() => {});
   }
 
   async function handleRemoveMember(id: string) {

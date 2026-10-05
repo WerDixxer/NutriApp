@@ -172,3 +172,23 @@ describe("MultiFactorDecisionEngine (integration wrapper)", () => {
     expect(result?.recipeId).toBe("matches-query");
   });
 });
+
+describe("MultiFactorDecisionEngine: Portionsgrenzen (R5F-9)", () => {
+  beforeEach(() => {
+    profileFindUnique.mockResolvedValue(null);
+    pantryItemFindMany.mockResolvedValue([]);
+    profileFindUniqueOrThrow.mockResolvedValue(baseProfile);
+    logEntryFindMany.mockResolvedValue([]);
+  });
+
+  it.each([
+    ["sehr kleines Rezept", { kcal: 30, proteinG: 2, carbsG: 3, fatG: 1 }, 2.5],
+    ["sehr großes Rezept", { kcal: 9000, proteinG: 600, carbsG: 900, fatG: 300 }, 0.4],
+  ])("%s: die Portion bleibt in 0,4x bis 2,5x", async (_label, nutrition, expected) => {
+    recipeFindMany.mockResolvedValue([dbRecipe(nutrition)]);
+
+    const result = await new MultiFactorDecisionEngine().decide({ profileId: "profile-1" });
+
+    expect(result?.portionMultiplier).toBe(expected);
+  });
+});

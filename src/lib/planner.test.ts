@@ -3,6 +3,8 @@ import {
   REPETITION_PENALTY_MAX_USES,
   REPETITION_PENALTY_PER_USE,
   buildDayPlan,
+  computeJointPortionScales,
+  computePortionScale,
   dayMacroDeviation,
   repetitionPenalty,
   selectRecipeForSlot,
@@ -237,5 +239,27 @@ describe("buildDayPlan: Trainingstage bleiben unverändert (Variety wirkt nur in
       "15:30 PRE_WORKOUT",
       "19:30 POST_WORKOUT",
     ]);
+  });
+});
+
+describe("Portionsgrenzen 0,4x bis 2,5x (R5F-9)", () => {
+  const tiny = recipe("klein", { kcal: 70, proteinG: 4, carbsG: 8, fatG: 2 });
+  const huge = recipe("riesig", { kcal: 7000, proteinG: 400, carbsG: 800, fatG: 200 });
+
+  it("computePortionScale klemmt auf die untere und obere Grenze", () => {
+    expect(computePortionScale(target, tiny)).toBe(2.5);
+    expect(computePortionScale(target, huge)).toBe(0.4);
+    expect(computePortionScale(target, recipe("passend"))).toBe(1);
+  });
+
+  it("computeJointPortionScales hält die Grenzen auch bei weit entfernten Tageszielen", () => {
+    const day = { kcal: 2800, proteinG: 160, carbsG: 320, fatG: 80 };
+    const enormous = recipe("enorm", { kcal: 28000, proteinG: 1600, carbsG: 3200, fatG: 800 });
+    expect(computeJointPortionScales(day, [{ recipe: tiny, priorScale: 1 }])).toEqual([2.5]);
+    expect(computeJointPortionScales(day, [{ recipe: enormous, priorScale: 1 }])).toEqual([0.4]);
+    for (const scale of computeJointPortionScales(day, [tiny, huge, recipe("mittel")].map((r) => ({ recipe: r, priorScale: 1 })))) {
+      expect(scale).toBeGreaterThanOrEqual(0.4);
+      expect(scale).toBeLessThanOrEqual(2.5);
+    }
   });
 });

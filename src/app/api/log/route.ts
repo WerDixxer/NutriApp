@@ -1,12 +1,17 @@
 import { NextResponse } from "next/server";
 import { parseCalendarDate, todayForUser, toDbDate } from "@/lib/calendarDate";
 import { prisma } from "@/lib/db";
+import { isRecipeVisibleTo, recipesVisibleTo } from "@/lib/recipes/recipeVisibility";
+import { findApiProfileId, requireApiProfileId } from "@/lib/apiProfile";
 import { getApiUserId } from "@/lib/session";
 import { logPayloadSchema } from "@/lib/validation/log";
 import { firstZodIssue } from "@/lib/validation/zodError";
 import { invalidJsonBodyResponse, readJsonBody } from "@/lib/validation/jsonBody";
 
-/** `?date=JJJJ-MM-TT` ist ein Kalendertag des Nutzers; ohne Angabe gilt heute. */
+/**
+ * `?date=JJJJ-MM-TT` ist ein Kalendertag des Nutzers; ohne Angabe gilt heute. Ein verknüpftes Rezept
+ * wird nur mitgeliefert, wenn das Profil es sehen darf (recipeVisibility.ts), sonst ist `recipe` null.
+ */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const dateParam = searchParams.get("date");
@@ -14,18 +19,24 @@ export async function GET(request: Request) {
   if (!day) return NextResponse.json({ error: "Datum muss ein gültiges Datum im Format JJJJ-MM-TT sein." }, { status: 400 });
 
   const userId = await getApiUserId();
-  if (!userId) return NextResponse.json({ entries: [] });
+  if (!userId) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
 
-  const profile = await prisma.profile.findUnique({ where: { userId } });
-  if (!profile) return NextResponse.json({ entries: [] });
+  // Ohne Profil gibt es keine Einträge.
+  const profileId = await findApiProfileId(userId);
+  if (!profileId) return NextResponse.json({ entries: [] });
 
   const entries = await prisma.logEntry.findMany({
-    where: { profileId: profile.id, date: toDbDate(day) },
+    where: { profileId, date: toDbDate(day) },
     include: { recipe: true },
     orderBy: { createdAt: "asc" },
   });
 
-  return NextResponse.json({ entries });
+  return NextResponse.json({
+    entries: entries.map((entry) => ({
+      ...entry,
+      recipe: entry.recipe && isRecipeVisibleTo(entry.recipe, profileId) ? entry.recipe : null,
+    })),
+  });
 }
 
 export async function POST(request: Request) {
@@ -40,14 +51,20 @@ export async function POST(request: Request) {
   }
   const body = parsed.data;
 
-  const profile = await prisma.profile.findUnique({ where: { userId } });
-  if (!profile) {
-    return NextResponse.json({ error: "Kein Profil vorhanden." }, { status: 404 });
+  const lookup = await requireApiProfileId(userId);
+  if (!lookup.ok) return lookup.response;
+  const profileId = lookup.profileId;
+
+  // Nur ein Rezept, das das Profil sehen darf. Unbekannt und fremd-privat bekommen dieselbe Antwort,
+  // damit sich über diesen Endpunkt nicht prüfen lässt, ob ein fremdes Rezept existiert.
+  if (body.recipeId) {
+    const recipe = await prisma.recipe.findFirst({ where: { id: body.recipeId, ...recipesVisibleTo(profileId) }, select: { id: true } });
+    if (!recipe) return NextResponse.json({ error: "Rezept nicht gefunden." }, { status: 404 });
   }
 
   const entry = await prisma.logEntry.create({
     data: {
-      profileId: profile.id,
+      profileId,
       date: toDbDate(body.date),
       slot: body.slot,
       recipeId: body.recipeId,
@@ -70,9 +87,10 @@ export async function DELETE(request: Request) {
   const id = searchParams.get("id");
   if (!id) return NextResponse.json({ error: "id fehlt" }, { status: 400 });
 
-  const profile = await prisma.profile.findUnique({ where: { userId } });
-  if (!profile) return NextResponse.json({ error: "Kein Profil vorhanden." }, { status: 404 });
+  const lookup = await requireApiProfileId(userId);
+  if (!lookup.ok) return lookup.response;
+  const profileId = lookup.profileId;
 
-  await prisma.logEntry.deleteMany({ where: { id, profileId: profile.id } });
+  await prisma.logEntry.deleteMany({ where: { id, profileId } });
   return NextResponse.json({ ok: true });
 }

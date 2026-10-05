@@ -100,6 +100,18 @@ describe("POST /api/meal-plans/generate: Ergebnis-Status", () => {
   });
 });
 
+describe("POST /api/meal-plans/generate: Lebenszyklus (R5F-5)", () => {
+  it("meldet die durch die Aktivierung archivierten Pläne, damit die Liste ihren Status nachziehen kann", async () => {
+    getApiHouseholdId.mockResolvedValueOnce("household-A");
+    generateAndSaveMealPlan.mockResolvedValueOnce({ status: "SUCCESS", plan: { id: "plan-2" }, archivedPlanIds: ["plan-1"], unmetSlots: [] });
+
+    const res = await POST(generateRequest(validBody));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: "SUCCESS", plan: { id: "plan-2" }, archivedPlanIds: ["plan-1"] });
+  });
+});
+
 describe("POST /api/meal-plans/generate: Start nicht in der Vergangenheit (R5E)", () => {
   it("lehnt einen Start vor heute mit 400 ab, ohne zu planen oder den Haushalt abzufragen", async () => {
     getApiHouseholdId.mockResolvedValueOnce("household-A");

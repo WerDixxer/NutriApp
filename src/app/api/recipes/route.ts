@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { findApiProfileId, requireApiProfileId } from "@/lib/apiProfile";
 import { getApiUserId } from "@/lib/session";
 import { recipePayloadSchema } from "@/lib/validation/recipes";
 import { firstZodIssue } from "@/lib/validation/zodError";
@@ -8,13 +9,14 @@ import { invalidJsonBodyResponse, readJsonBody } from "@/lib/validation/jsonBody
 
 export async function GET() {
   const userId = await getApiUserId();
-  if (!userId) return NextResponse.json({ recipes: [] });
+  if (!userId) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
 
-  const profile = await prisma.profile.findUnique({ where: { userId } });
-  if (!profile) return NextResponse.json({ recipes: [] });
+  // Ohne Profil gibt es keine eigenen Rezepte.
+  const profileId = await findApiProfileId(userId);
+  if (!profileId) return NextResponse.json({ recipes: [] });
 
   const recipes = await prisma.recipe.findMany({
-    where: { ownerProfileId: profile.id, isCustom: true },
+    where: { ownerProfileId: profileId, isCustom: true },
     orderBy: { createdAt: "desc" },
   });
   return NextResponse.json({ recipes });
@@ -32,10 +34,9 @@ export async function POST(request: Request) {
   }
   const body = parsed.data;
 
-  const profile = await prisma.profile.findUnique({ where: { userId } });
-  if (!profile) {
-    return NextResponse.json({ error: "Kein Profil vorhanden." }, { status: 404 });
-  }
+  const lookup = await requireApiProfileId(userId);
+  if (!lookup.ok) return lookup.response;
+  const profileId = lookup.profileId;
 
   const recipe = await prisma.recipe.create({
     data: {
@@ -55,7 +56,7 @@ export async function POST(request: Request) {
       instructions: JSON.stringify(body.instructions),
       isCustom: true,
       sourceType: "user",
-      ownerProfileId: profile.id,
+      ownerProfileId: profileId,
     },
   });
 
@@ -71,11 +72,12 @@ export async function DELETE(request: Request) {
   const userId = await getApiUserId();
   if (!userId) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
 
-  const profile = await prisma.profile.findUnique({ where: { userId } });
-  if (!profile) return NextResponse.json({ error: "Kein Profil vorhanden." }, { status: 404 });
+  const lookup = await requireApiProfileId(userId);
+  if (!lookup.ok) return lookup.response;
+  const profileId = lookup.profileId;
 
   try {
-    await prisma.recipe.deleteMany({ where: { id, ownerProfileId: profile.id, isCustom: true } });
+    await prisma.recipe.deleteMany({ where: { id, ownerProfileId: profileId, isCustom: true } });
   } catch (error) {
     if (isForeignKeyConstraintError(error)) {
       return NextResponse.json(

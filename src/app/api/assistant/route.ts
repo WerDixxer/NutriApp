@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { admitAssistantRequest, finishAssistantRequest, type AssistantAdmission } from "@/lib/agents/assistantUsage";
 import { runFoodAssistant } from "@/lib/agents/foodAssistant";
 import { LLMConfigError, LLMTimeoutError } from "@/lib/agents/llmProvider";
+import { requireApiProfileId } from "@/lib/apiProfile";
 import { getApiUserId } from "@/lib/session";
 import { assistantMessageSchema } from "@/lib/validation/assistant";
 import { firstZodIssue } from "@/lib/validation/zodError";
@@ -36,17 +37,16 @@ export async function POST(request: Request) {
   }
   const { message } = parsed.data;
 
-  const profile = await prisma.profile.findUnique({ where: { userId } });
-  if (!profile) {
-    return NextResponse.json({ error: "Kein Profil vorhanden." }, { status: 404 });
-  }
+  const lookup = await requireApiProfileId(userId);
+  if (!lookup.ok) return lookup.response;
+  const profileId = lookup.profileId;
 
   // Ab hier zählt die Anfrage (F-20): Limits pro Nutzer, höchstens eine aktive Anfrage.
   const admission = await admitAssistantRequest(userId);
   if (!admission.ok) return rejectedAdmissionResponse(admission);
 
   try {
-    const result = await runFoodAssistant(profile.id, message);
+    const result = await runFoodAssistant(profileId, message);
     return NextResponse.json(result);
   } catch (err) {
     if (err instanceof LLMConfigError) {

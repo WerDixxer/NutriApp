@@ -1,7 +1,8 @@
-import { addDays, startOfWeek, todayForUser, toDbDate, type CalendarDate } from "../calendarDate";
+import { addDays, fromDbDate, startOfWeek, todayForUser, toDbDate, type CalendarDate } from "../calendarDate";
 import { prisma } from "../db";
 import { getHouseholdIdForProfile } from "../household";
 import { getHouseholdRotation } from "../rotation/rotationService";
+import { isHistoricalPlanDay } from "../planDayBoundary";
 import type { MealForAggregation } from "../mealPrep/aggregation";
 import type { PantryItemForMatch } from "../mealPrep/enrichment";
 import type { FoodCatalog } from "../recipes/catalog";
@@ -36,6 +37,10 @@ export function weekRangeFor(day: CalendarDate): { start: CalendarDate; end: Cal
  * das /plan beim Öffnen aufruft). Tage ohne Plan fließen nicht ein, `plannedDays`
  * macht das sichtbar.
  *
+ * Die Liste beantwortet "Was brauche ich noch?" (R5E): Nur heute und künftige Tage (ab
+ * todayForUser) erzeugen Einkaufsbedarf. Vergangene Tage bleiben unverändert gespeichert und
+ * zählen weiter in `plannedDays`, ihre Mahlzeiten fließen aber nicht in die Mengen ein.
+ *
  * Der Vorrat gehört dem Haushalt des Profils; ohne Haushalt gilt er als leer,
  * alles gilt dann als fehlend. Der Vorrat wird nur gelesen, nie verändert.
  */
@@ -45,7 +50,8 @@ export async function getWeeklyShoppingForProfile(
   day?: CalendarDate,
   now: Date = new Date(),
 ): Promise<WeeklyShoppingResult> {
-  const { start, end } = weekRangeFor(day ?? todayForUser(now));
+  const today = todayForUser(now);
+  const { start, end } = weekRangeFor(day ?? today);
 
   const [days, householdId] = await Promise.all([
     prisma.mealPlanDay.findMany({
@@ -56,7 +62,8 @@ export async function getWeeklyShoppingForProfile(
     getHouseholdIdForProfile(profileId),
   ]);
 
-  const meals: MealForAggregation[] = days.flatMap((day) =>
+  const daysStillAhead = days.filter((d) => !isHistoricalPlanDay(fromDbDate(d.date), today));
+  const meals: MealForAggregation[] = daysStillAhead.flatMap((day) =>
     day.items.map((item) => ({
       id: item.id,
       date: day.date,

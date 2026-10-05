@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { requireApiProfileId } from "@/lib/apiProfile";
 import { getApiUserId } from "@/lib/session";
 import { getWeeklyShoppingForProfile } from "@/lib/shopping/weeklyShoppingService";
 import { weeklyShoppingQuerySchema } from "@/lib/validation/shopping";
@@ -20,9 +20,10 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: firstZodIssue(parsed.error) }, { status: 400 });
   }
 
-  const profile = await prisma.profile.findUnique({ where: { userId }, select: { id: true } });
-  if (!profile) return NextResponse.json({ error: "Kein Profil vorhanden." }, { status: 404 });
+  const lookup = await requireApiProfileId(userId);
+  if (!lookup.ok) return lookup.response;
+  const profileId = lookup.profileId;
 
-  const shopping = await getWeeklyShoppingForProfile(profile.id, parsed.data.date);
+  const shopping = await getWeeklyShoppingForProfile(profileId, parsed.data.date);
   return NextResponse.json({ shopping });
 }

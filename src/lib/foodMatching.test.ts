@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { computeSingleItemScale, ingredientListIncludes, macroProfile, matchesAllergen } from "./foodMatching";
+import type { DietType } from "@prisma/client";
+import { checkHardConstraints } from "./agents/decision/hardConstraints";
+import type { SearchableRecipe } from "./agents/recipeSearch";
+import {
+  PORTION_SCALE_BOUNDS,
+  computeSingleItemScale,
+  fitsProfileHardRules,
+  ingredientListIncludes,
+  macroProfile,
+  matchesAllergen,
+} from "./foodMatching";
+import type { FoodCatalog } from "./recipes/catalog";
 
 describe("matchesAllergen", () => {
   it("matches case-insensitively and on substrings", () => {
@@ -60,3 +71,101 @@ describe("computeSingleItemScale", () => {
     expect(computeSingleItemScale(target, tiny, [0.4, 2.5])).toBe(0.4);
   });
 });
+
+describe("fitsProfileHardRules (R5F-9)", () => {
+  const omnivore = { dietType: "OMNIVORE" as const, allergies: [] };
+
+  it("schließt ein Rezept aus, das nicht zur Ernährungsform passt", () => {
+    expect(fitsProfileHardRules({ dietTypes: ["OMNIVORE"], allergens: [], ingredients: ["100 g Reis"] }, { dietType: "VEGAN", allergies: [] })).toBe(false);
+    expect(fitsProfileHardRules({ dietTypes: ["OMNIVORE", "VEGAN"], allergens: [], ingredients: ["100 g Reis"] }, { dietType: "VEGAN", allergies: [] })).toBe(true);
+  });
+
+  it("schließt ein Rezept mit einer Allergie des Profils aus - über die Allergen-Angabe oder die Zutaten", () => {
+    const peanutAllergy = { dietType: "OMNIVORE" as const, allergies: ["Erdnüsse"] };
+    expect(fitsProfileHardRules({ dietTypes: ["OMNIVORE"], allergens: ["erdnuss"], ingredients: ["100 g Reis"] }, peanutAllergy)).toBe(false);
+    expect(fitsProfileHardRules({ dietTypes: ["OMNIVORE"], allergens: [], ingredients: ["50 g Erdnüsse"] }, peanutAllergy)).toBe(false);
+    expect(fitsProfileHardRules({ dietTypes: ["OMNIVORE"], allergens: ["gluten"], ingredients: ["100 g Reis"] }, peanutAllergy)).toBe(true);
+  });
+
+  it("ohne Allergien bleibt ein Rezept mit Allergenen zulässig", () => {
+    expect(fitsProfileHardRules({ dietTypes: ["OMNIVORE"], allergens: ["erdnuss", "milch"], ingredients: ["50 g Erdnüsse"] }, omnivore)).toBe(true);
+  });
+
+  it("prüft Allergene nur für Rezepte mit passender Ernährungsform (Kurzschluss wie bisher)", () => {
+    const untouchableCatalog = new Proxy({} as FoodCatalog, {
+      get() {
+        throw new Error("Der Katalog darf für ein unpassendes Rezept nicht gelesen werden.");
+      },
+    });
+    const milkAllergy = { dietType: "VEGAN" as const, allergies: ["Milch"] };
+    const recipe = { dietTypes: ["OMNIVORE"] as DietType[], allergens: [], ingredients: ["300 g Skyr"] };
+    expect(fitsProfileHardRules(recipe, milkAllergy, untouchableCatalog)).toBe(false);
+    // Gegenprobe: mit passender Ernährungsform läuft die Allergen-Prüfung samt Katalog.
+    expect(() => fitsProfileHardRules({ ...recipe, dietTypes: ["VEGAN"] }, milkAllergy, untouchableCatalog)).toThrow();
+  });
+
+  it("Abneigungen und ausgeschlossene Zutaten gehören nicht dazu; checkHardConstraints prüft Ausschlüsse weiterhin separat", () => {
+    const mushrooms = searchable({ ingredients: ["200 g Pilze"] });
+    expect(fitsProfileHardRules(mushrooms, omnivore)).toBe(true);
+    expect(checkHardConstraints(mushrooms, { ...omnivore, excludedIngredients: ["Pilze"] }).map((v) => v.constraint)).toEqual(["excludedIngredients"]);
+  });
+
+  it("entscheidet genau wie checkHardConstraints ohne ausgeschlossene Zutaten", () => {
+    const dietTypeOptions: DietType[][] = [["OMNIVORE"], ["VEGAN"], ["VEGETARIAN", "VEGAN"]];
+    const allergenOptions = [[], ["milch"], ["erdnuss"]];
+    const ingredientOptions = [["100 g Reis"], ["50 g Erdnussbutter"], ["200 ml Milch"]];
+    const profiles: { dietType: DietType; allergies: string[] }[] = [
+      { dietType: "OMNIVORE", allergies: [] },
+      { dietType: "VEGAN", allergies: [] },
+      { dietType: "OMNIVORE", allergies: ["Milch"] },
+      { dietType: "VEGAN", allergies: ["Erdnüsse", "Gluten"] },
+    ];
+    let checked = 0;
+    for (const dietTypes of dietTypeOptions) {
+      for (const allergens of allergenOptions) {
+        for (const ingredients of ingredientOptions) {
+          const recipe = searchable({ dietTypes, allergens, ingredients });
+          for (const profile of profiles) {
+            const central = checkHardConstraints(recipe, { ...profile, excludedIngredients: [] }).length === 0;
+            expect(fitsProfileHardRules(recipe, profile), JSON.stringify({ dietTypes, allergens, ingredients, profile })).toBe(central);
+            checked++;
+          }
+        }
+      }
+    }
+    expect(checked).toBe(108);
+  });
+});
+
+describe("PORTION_SCALE_BOUNDS (R5F-9)", () => {
+  it("ist die gemeinsame Grenze 0,4x bis 2,5x", () => {
+    expect(PORTION_SCALE_BOUNDS).toEqual({ min: 0.4, max: 2.5 });
+  });
+
+  it("computeSingleItemScale nutzt sie ohne ausdrückliche Grenzen", () => {
+    const target = { kcal: 600, proteinG: 40, carbsG: 60, fatG: 20 };
+    expect(computeSingleItemScale(target, { kcal: 20, proteinG: 1, carbsG: 2, fatG: 0.5 })).toBe(2.5);
+    expect(computeSingleItemScale(target, { kcal: 6000, proteinG: 400, carbsG: 600, fatG: 200 })).toBe(0.4);
+  });
+});
+
+function searchable(overrides: Partial<SearchableRecipe>): SearchableRecipe {
+  return {
+    id: "r1",
+    name: "Testrezept",
+    description: "",
+    kcal: 500,
+    proteinG: 30,
+    carbsG: 50,
+    fatG: 15,
+    prepTimeMin: 20,
+    servings: 1,
+    mealSlots: ["LUNCH"],
+    dietTypes: ["OMNIVORE"],
+    allergens: [],
+    ingredients: ["100 g Reis"],
+    tags: [],
+    isTrending: false,
+    ...overrides,
+  };
+}

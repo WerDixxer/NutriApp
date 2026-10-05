@@ -4,7 +4,9 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    // *.test.tsx sind Component-Tests: Sie wählen per `// @vitest-environment jsdom` selbst eine DOM-Umgebung,
+    // alle übrigen Tests laufen weiter in Node.
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     // Kein Test darf prisma/dev.db erreichen: Ein PrismaClient ohne explizite `datasourceUrl` würde
     // sonst die DATABASE_URL aus .env laden. Der Sperrwert ist keine gültige SQLite-URL, ein solcher
     // Client scheitert sofort (PrismaClientInitializationError). Datenbanktests nutzen stattdessen

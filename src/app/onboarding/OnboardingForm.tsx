@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Activity, Dumbbell, Salad, Target, Trash2, User, Plus } from "lucide-react";
@@ -18,6 +18,7 @@ import { MAX_RATE_KG_PER_WEEK } from "@/lib/nutrition";
 import { suggestAllergens } from "@/lib/recipes/allergens";
 import { suggestFoods, type SuggestionFood } from "@/lib/recipes/foodSuggestions";
 import PlanAdaptationDialog from "./PlanAdaptationDialog";
+import { canSaveProfile, loadProfileForForm, type ProfileLoadState } from "./profileLoad";
 
 type GoalKey = keyof typeof MAX_RATE_KG_PER_WEEK;
 
@@ -111,47 +112,57 @@ export default function OnboardingForm({ foods }: { foods: SuggestionFood[] }) {
 
   const [trainingSessions, setTrainingSessions] = useState<TrainingRow[]>([emptyTraining()]);
 
-  useEffect(() => {
-    fetch("/api/profile")
-      .then((r) => r.json())
-      .then((data) => {
-        const p = data.profile;
-        if (!p) return;
-        setAge(p.age);
-        setSex(p.sex);
-        setHeightCm(p.heightCm);
-        setWeightKg(p.weightKg);
-        setActivityLevel(p.activityLevel);
-        setGoal(p.goal);
-        setGoalRateKgPerWeek(p.goalRateKgPerWeek);
-        setSportType(p.sportType);
-        setDietType(p.dietType);
-        setLikedFoods(p.likedFoods.map((t: { label: string }) => t.label));
-        setDislikedFoods(p.dislikedFoods.map((t: { label: string }) => t.label));
-        setAllergies(p.allergies.map((t: { label: string }) => t.label));
-        setPriorities(p.priorities.map((t: { label: string }) => t.label));
-        if (p.trainingSessions.length > 0) {
-          setTrainingSessions(
-            p.trainingSessions.map(
-              (s: {
-                weekday: number;
-                startTime: string;
-                durationMin: number;
-                sportType: string;
-                intensity: number;
-              }) => ({
-                weekday: s.weekday,
-                startTime: s.startTime,
-                durationMin: s.durationMin,
-                sportType: s.sportType,
-                intensity: s.intensity,
-              }),
-            ),
-          );
-        }
-      })
-      .catch(() => {});
+  // Bis feststeht, ob es ein Profil gibt, sind die Startwerte oben keine Profildaten: Speichern bleibt
+  // gesperrt, sonst könnten sie das echte Profil (z.B. dessen Allergien) überschreiben (R5F-1).
+  const [profileLoad, setProfileLoad] = useState<ProfileLoadState>({ status: "loading" });
+  const saveAllowed = canSaveProfile(profileLoad);
+
+  /** Übernimmt ein Ladeergebnis: nur ein geladenes Profil füllt das Formular. */
+  const applyProfileLoad = useCallback((result: Exclude<ProfileLoadState, { status: "loading" }>) => {
+    if (result.status === "existing") {
+      const p = result.profile;
+      setAge(p.age);
+      setSex(p.sex);
+      setHeightCm(p.heightCm);
+      setWeightKg(p.weightKg);
+      setActivityLevel(p.activityLevel);
+      setGoal(p.goal);
+      setGoalRateKgPerWeek(p.goalRateKgPerWeek);
+      setSportType(p.sportType);
+      setDietType(p.dietType);
+      setLikedFoods(p.likedFoods.map((t) => t.label));
+      setDislikedFoods(p.dislikedFoods.map((t) => t.label));
+      setAllergies(p.allergies.map((t) => t.label));
+      setPriorities(p.priorities.map((t) => t.label));
+      if (p.trainingSessions.length > 0) {
+        setTrainingSessions(
+          p.trainingSessions.map((s) => ({
+            weekday: s.weekday,
+            startTime: s.startTime,
+            durationMin: s.durationMin,
+            sportType: s.sportType,
+            intensity: s.intensity,
+          })),
+        );
+      }
+    }
+    setProfileLoad(result);
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    void loadProfileForForm().then((result) => {
+      if (active) applyProfileLoad(result);
+    });
+    return () => {
+      active = false;
+    };
+  }, [applyProfileLoad]);
+
+  function retryProfileLoad() {
+    setProfileLoad({ status: "loading" });
+    void loadProfileForForm().then(applyProfileLoad);
+  }
 
   function updateTraining(index: number, patch: Partial<TrainingRow>) {
     setTrainingSessions((rows) => rows.map((r, i) => (i === index ? { ...r, ...patch } : r)));
@@ -159,6 +170,7 @@ export default function OnboardingForm({ foods }: { foods: SuggestionFood[] }) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!canSaveProfile(profileLoad)) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -200,6 +212,24 @@ export default function OnboardingForm({ foods }: { foods: SuggestionFood[] }) {
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-6 pb-16">
+      {profileLoad.status === "loading" && (
+        <p role="status" className="text-[13.5px] text-ink-soft">
+          Dein Profil wird geladen…
+        </p>
+      )}
+      {profileLoad.status === "error" && (
+        <div role="alert" className="flex flex-col items-start gap-3 rounded-[var(--radius-md)] border border-border bg-bg-dim p-4">
+          <p className="text-[13.5px] leading-snug text-ink">
+            Dein Profil konnte gerade nicht geladen werden. Damit deine gespeicherten Angaben wie Allergien nicht
+            überschrieben werden, kannst du erst nach erfolgreichem Laden speichern.
+          </p>
+          <Button type="button" size="sm" variant="secondary" onClick={retryProfileLoad}>
+            Erneut laden
+          </Button>
+        </div>
+      )}
+
+      <fieldset disabled={!saveAllowed} className="m-0 flex min-w-0 flex-col gap-6 border-0 p-0">
       <SectionCard icon={User} title="Über dich" subtitle="Basis für deine Kalorienberechnung">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Alter">
@@ -466,10 +496,11 @@ export default function OnboardingForm({ foods }: { foods: SuggestionFood[] }) {
 
       {error && <p className="text-[13.5px] font-semibold text-danger">{error}</p>}
 
-      <Button type="submit" disabled={submitting}>
+      <Button type="submit" disabled={submitting || !saveAllowed}>
         <Activity className="h-4 w-4" />
         {submitting ? "Speichern…" : "Speichern & Plan erstellen"}
       </Button>
+      </fieldset>
 
       <PlanAdaptationDialog open={askPlanAdaptation} onDone={goToDashboard} />
     </form>

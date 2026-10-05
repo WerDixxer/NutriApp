@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { X } from "lucide-react";
+import { dismissInsight } from "./insightRequests";
 
 export interface InsightView {
   id: string;
@@ -33,16 +34,19 @@ const PRIORITY_DOT: Record<InsightView["priority"], string> = {
 export function InsightsPanel({ initialInsights }: { initialInsights: InsightView[] }) {
   const [insights, setInsights] = useState(initialInsights);
   const [dismissingId, setDismissingId] = useState<string | null>(null);
+  const [dismissError, setDismissError] = useState<string | null>(null);
 
+  // Ein Hinweis verschwindet erst nach Bestätigung des Servers (R5F-3).
   async function dismiss(id: string) {
     setDismissingId(id);
-    setInsights((prev) => prev.filter((i) => i.id !== id));
+    setDismissError(null);
     try {
-      await fetch("/api/insights/dismiss", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ insightKey: id }),
-      });
+      const result = await dismissInsight(id);
+      if (!result.ok) {
+        setDismissError(result.message);
+        return;
+      }
+      setInsights((prev) => prev.filter((i) => i.id !== id));
     } finally {
       setDismissingId(null);
     }
@@ -52,6 +56,11 @@ export function InsightsPanel({ initialInsights }: { initialInsights: InsightVie
 
   return (
     <div className="rounded-[var(--radius-md)] bg-bg-dim px-4 py-1 sm:px-5">
+      {dismissError && (
+        <p role="alert" className="py-2 text-[13px] font-semibold text-danger">
+          {dismissError}
+        </p>
+      )}
       <AnimatePresence initial={false}>
         {insights.map((insight, idx) => (
           <motion.div

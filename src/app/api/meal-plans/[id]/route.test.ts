@@ -66,16 +66,29 @@ describe("PATCH /api/meal-plans/[id]", () => {
 
   it("liefert 404 für einen fremden Plan", async () => {
     getApiHouseholdId.mockResolvedValueOnce("household-B");
-    updateMealPlan.mockResolvedValueOnce(null);
+    updateMealPlan.mockResolvedValueOnce({ ok: false, error: "NOT_FOUND" });
     const res = await PATCH(new Request("http://x", { method: "PATCH", body: JSON.stringify({ status: "ARCHIVED" }) }), ctx("plan-of-A"));
     expect(res.status).toBe(404);
   });
 
-  it("aktualisiert den eigenen Plan", async () => {
+  it("aktualisiert den eigenen Plan und meldet archivierte Pläne", async () => {
     getApiHouseholdId.mockResolvedValueOnce("household-A");
-    updateMealPlan.mockResolvedValueOnce({ id: "plan-1", status: "ARCHIVED" });
-    const res = await PATCH(new Request("http://x", { method: "PATCH", body: JSON.stringify({ status: "ARCHIVED" }) }), ctx("plan-1"));
+    updateMealPlan.mockResolvedValueOnce({ ok: true, plan: { id: "plan-1", status: "ACTIVE" }, archivedPlanIds: ["plan-0"] });
+    const res = await PATCH(new Request("http://x", { method: "PATCH", body: JSON.stringify({ status: "ACTIVE" }) }), ctx("plan-1"));
     expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ plan: { id: "plan-1", status: "ACTIVE" }, archivedPlanIds: ["plan-0"] });
+    expect(updateMealPlan).toHaveBeenCalledWith("household-A", "plan-1", { status: "ACTIVE" }, expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/));
+  });
+
+  it.each([
+    ["INVALID_TRANSITION", "Dieser Statuswechsel ist nicht möglich: Entwürfe können aktiviert, aktive Pläne archiviert werden."],
+    ["HISTORICAL_PLAN", "Ein vergangener Entwurf kann nicht mehr aktiviert werden."],
+  ])("antwortet auf %s mit 409 und einer verständlichen Meldung", async (error, message) => {
+    getApiHouseholdId.mockResolvedValueOnce("household-A");
+    updateMealPlan.mockResolvedValueOnce({ ok: false, error });
+    const res = await PATCH(new Request("http://x", { method: "PATCH", body: JSON.stringify({ status: "ACTIVE" }) }), ctx("plan-1"));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: message });
   });
 });
 
@@ -89,15 +102,26 @@ describe("DELETE /api/meal-plans/[id]", () => {
 
   it("liefert 404 für einen fremden/nicht existenten Plan", async () => {
     getApiHouseholdId.mockResolvedValueOnce("household-B");
-    deleteMealPlan.mockResolvedValueOnce(false);
+    deleteMealPlan.mockResolvedValueOnce({ ok: false, error: "NOT_FOUND" });
     const res = await DELETE(new Request("http://x"), ctx("plan-of-A"));
     expect(res.status).toBe(404);
   });
 
-  it("löscht den eigenen Plan erfolgreich", async () => {
+  it("löscht einen eigenen Entwurf erfolgreich und prüft gegen den heutigen Kalendertag", async () => {
     getApiHouseholdId.mockResolvedValueOnce("household-A");
-    deleteMealPlan.mockResolvedValueOnce(true);
+    deleteMealPlan.mockResolvedValueOnce({ ok: true });
     const res = await DELETE(new Request("http://x"), ctx("plan-1"));
     expect(res.status).toBe(200);
+    expect(deleteMealPlan).toHaveBeenCalledWith("household-A", "plan-1", expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/));
+  });
+
+  it("lehnt das Löschen eines nicht löschbaren Plans mit 409 und einer verständlichen Meldung ab", async () => {
+    getApiHouseholdId.mockResolvedValueOnce("household-A");
+    deleteMealPlan.mockResolvedValueOnce({ ok: false, error: "NOT_DELETABLE" });
+    const res = await DELETE(new Request("http://x"), ctx("plan-1"));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: "Löschen lassen sich nur Entwürfe, die heute oder später beginnen; aktive, archivierte und vergangene Pläne bleiben erhalten.",
+    });
   });
 });

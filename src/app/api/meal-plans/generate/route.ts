@@ -75,5 +75,5 @@ export async function POST(request: Request) {
     );
   }
 
-  return NextResponse.json({ status: result.status, plan: result.plan, unmetSlots: result.unmetSlots });
+  return NextResponse.json({ status: result.status, plan: result.plan, archivedPlanIds: result.archivedPlanIds, unmetSlots: result.unmetSlots });
 }

@@ -1,6 +1,6 @@
 import { addDays, todayForUser, toDbDate } from "../calendarDate";
 import { prisma } from "../db";
-import { matchesAllergen } from "../foodMatching";
+import { fitsProfileHardRules } from "../foodMatching";
 import { getBudgetSummary } from "../budget/budgetService";
 import { detectPantryExpired, detectPantryExpiringSoon } from "./detectors/pantryDetectors";
 import {
@@ -102,11 +102,7 @@ export async function getInsightsForProfile(profileId: string, now: Date = new D
       allergens: readRecipeStringList(r, "allergens"),
       ingredients: readRecipeStringList(r, "ingredients"),
     }))
-      .filter((r) => {
-        if (!r.dietTypes.includes(profile.dietType)) return false;
-        if (matchesAllergen(r.allergens, allergyLabels, r.ingredients, catalog)) return false;
-        return true;
-      })
+      .filter((r) => fitsProfileHardRules(r, { dietType: profile.dietType, allergies: allergyLabels }, catalog))
       .map((r) => ({ id: r.id, name: r.name, ingredients: r.ingredients }));
 
     insights.push(

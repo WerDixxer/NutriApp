@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CalendarDate } from "../calendarDate";
-import { generateMealPlan } from "./plannerEngine";
+import { computePortionScale } from "../planner";
+import { estimatePortionScale, generateMealPlan } from "./plannerEngine";
 import type { MemberPlanningContext, PlanningContext } from "./types";
 import type { SearchableRecipe } from "../agents/recipeSearch";
 
@@ -208,5 +209,36 @@ describe("generateMealPlan: Reasons sind nur tatsächlich berechnete Gründe", (
     for (const reason of meal.reasons) {
       expect(reason.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("Portionsgrenzen im Haushaltsplaner (R5F-9)", () => {
+  it("estimatePortionScale liefert dieselben Werte wie computePortionScale des persönlichen Planers", () => {
+    for (const targetKcal of [0, 150, 600, 1500, 4000]) {
+      for (const recipeKcal of [0, 1, 60, 240, 600, 1500, 10000]) {
+        const slotTarget = { slot: "LUNCH" as const, time: "13:00", kcal: targetKcal, proteinG: 0, carbsG: 0, fatG: 0 };
+        const candidate = { id: "r", name: "r", kcal: recipeKcal, proteinG: 0, carbsG: 0, fatG: 0, mealSlots: ["LUNCH" as const], ingredients: [], isTrending: false };
+        expect(estimatePortionScale(targetKcal, recipeKcal)).toBe(computePortionScale(slotTarget, candidate));
+      }
+    }
+  });
+
+  it("hält die Portionen auch bei sehr kleinen und sehr großen Rezepten in 0,4x bis 2,5x", () => {
+    const extreme = context({
+      candidates: [
+        recipe({ id: "breakfast-tiny", mealSlots: ["BREAKFAST"], kcal: 40, proteinG: 2, carbsG: 5, fatG: 1 }),
+        recipe({ id: "lunch-huge", mealSlots: ["LUNCH"], kcal: 6000, proteinG: 300, carbsG: 700, fatG: 200 }),
+        recipe({ id: "dinner-tiny", mealSlots: ["DINNER"], kcal: 50, proteinG: 3, carbsG: 6, fatG: 1 }),
+      ],
+    });
+    const result = generateMealPlan(extreme, { startDate: TODAY, days: 3, slots: ["BREAKFAST", "LUNCH", "DINNER"] }, now);
+
+    expect(result.meals).toHaveLength(9);
+    const scales = result.meals.map((m) => m.portionMultiplier);
+    for (const scale of scales) {
+      expect(scale).toBeGreaterThanOrEqual(0.4);
+      expect(scale).toBeLessThanOrEqual(2.5);
+    }
+    expect(scales).toContain(2.5);
   });
 });

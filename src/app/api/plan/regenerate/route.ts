@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { todayForUser } from "@/lib/calendarDate";
-import { prisma } from "@/lib/db";
 import { regenerateEditableDays } from "@/lib/generateMealPlan";
+import { requireApiProfileId } from "@/lib/apiProfile";
 import { getApiUserId } from "@/lib/session";
 
 /**
@@ -14,10 +14,11 @@ export async function POST() {
   const userId = await getApiUserId();
   if (!userId) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
 
-  const profile = await prisma.profile.findUnique({ where: { userId }, select: { id: true } });
-  if (!profile) return NextResponse.json({ error: "Kein Profil vorhanden." }, { status: 404 });
+  const lookup = await requireApiProfileId(userId);
+  if (!lookup.ok) return lookup.response;
+  const profileId = lookup.profileId;
 
   const today = todayForUser();
-  const { regeneratedDays } = await regenerateEditableDays(profile.id, today);
+  const { regeneratedDays } = await regenerateEditableDays(profileId, today);
   return NextResponse.json({ today, regeneratedDays });
 }

@@ -6,6 +6,7 @@ import { PANTRY_LOCATION_LABELS, EXPIRATION_TYPE_LABELS } from "@/lib/labels";
 import { Input, Select, Textarea } from "@/components/ui/Field";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { adjustPantryQuantity, deletePantryItem } from "./pantryRequests";
 
 export interface PantryRotationView {
   pantryItemId: string;
@@ -455,21 +456,25 @@ export default function PantryClient({
     }
   }
 
+  // Entfernen und Mengenänderung übernimmt die Anzeige erst nach Bestätigung des Servers (R5F-3).
   async function handleDelete(id: string) {
+    setError(null);
+    const result = await deletePantryItem(id);
+    if (!result.ok) {
+      setError(result.message);
+      return;
+    }
     setItems((prev) => prev.filter((it) => it.id !== id));
-    await fetch(`/api/pantry/${id}`, { method: "DELETE" }).catch(() => {});
   }
 
   async function handleAdjust(item: PantryItemView, type: "add" | "consume", amount: number) {
-    const res = await fetch(`/api/pantry/${item.id}/adjust`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type, amount }),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, remainingQuantity: data.item.remainingQuantity } : it)));
+    setError(null);
+    const result = await adjustPantryQuantity(item.id, type, amount);
+    if (!result.ok) {
+      setError(result.message);
+      return;
     }
+    setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, remainingQuantity: result.remainingQuantity } : it)));
   }
 
   const isEmpty = items.length === 0;

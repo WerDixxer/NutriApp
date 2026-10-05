@@ -69,9 +69,10 @@ describe("generateAndSaveMealPlan: erfolgreicher Pfad", () => {
     buildPlanningContext.mockResolvedValueOnce(ctxWithMembers());
     generateMealPlan.mockReturnValueOnce({ status: "SUCCESS", meals: [], unmetSlots: [] });
     validateGeneratedPlan.mockReturnValueOnce([]);
-    createMealPlan.mockResolvedValueOnce({ id: "plan-1" });
+    createMealPlan.mockResolvedValueOnce({ plan: { id: "plan-1" }, archivedPlanIds: [] });
     const result = await generateAndSaveMealPlan(baseRequest, now);
     expect(result.status).toBe("SUCCESS");
+    expect(result.plan).toEqual({ id: "plan-1" });
     expect(createMealPlan).toHaveBeenCalledWith("household-A", expect.objectContaining({ status: "ACTIVE" }));
   });
 
@@ -79,7 +80,7 @@ describe("generateAndSaveMealPlan: erfolgreicher Pfad", () => {
     buildPlanningContext.mockResolvedValueOnce(ctxWithMembers());
     generateMealPlan.mockReturnValueOnce({ status: "PARTIAL", meals: [], unmetSlots: [{ date: TODAY, slot: "DINNER", reason: "x" }] });
     validateGeneratedPlan.mockReturnValueOnce([]);
-    createMealPlan.mockResolvedValueOnce({ id: "plan-1" });
+    createMealPlan.mockResolvedValueOnce({ plan: { id: "plan-1" }, archivedPlanIds: [] });
     const result = await generateAndSaveMealPlan(baseRequest, now);
     expect(result.status).toBe("PARTIAL");
     expect(createMealPlan).toHaveBeenCalledWith("household-A", expect.objectContaining({ status: "DRAFT" }));
@@ -89,7 +90,7 @@ describe("generateAndSaveMealPlan: erfolgreicher Pfad", () => {
     buildPlanningContext.mockResolvedValueOnce(ctxWithMembers(2));
     generateMealPlan.mockReturnValueOnce({ status: "SUCCESS", meals: [], unmetSlots: [] });
     validateGeneratedPlan.mockReturnValueOnce([]);
-    createMealPlan.mockResolvedValueOnce({ id: "plan-1" });
+    createMealPlan.mockResolvedValueOnce({ plan: { id: "plan-1" }, archivedPlanIds: [] });
     await generateAndSaveMealPlan(baseRequest, now);
     expect(createMealPlan).toHaveBeenCalledWith("household-A", expect.objectContaining({ householdMemberIds: ["member-0", "member-1"] }));
   });

@@ -23,6 +23,7 @@ import {
 } from "./importWorkflow";
 import {
   evaluateImportCandidate,
+  isImportSourceType,
   normalizeImportedRecipe,
   type ImportCandidateEvaluation,
   type ImportedRecipeCandidate,
@@ -95,6 +96,10 @@ function toStoredCandidate(row: ImportCandidateRow): StoredImportCandidate {
   if (!isImportQueueStatus(row.status)) {
     throw new Error(`RecipeImportCandidate ${row.id}: unbekannter Status "${row.status}".`);
   }
+  // Steuert u.a. die Sperre für Mock-Quellen in Produktion (isDisabledMockSource) - nie ungeprüft übernehmen.
+  if (!isImportSourceType(row.sourceType)) {
+    throw new Error(`RecipeImportCandidate ${row.id}: unbekannte Quelle "${row.sourceType}".`);
+  }
   const ingredients: StoredImportIngredient[] = readJsonColumn(candidateColumn(row, "ingredients"), row.ingredients, storedImportIngredientListSchema);
   const rawPayload = readJsonColumn(candidateColumn(row, "rawPayload"), row.rawPayload, storedAnyJsonSchema);
 
@@ -103,7 +108,7 @@ function toStoredCandidate(row: ImportCandidateRow): StoredImportCandidate {
     status: row.status,
     candidate: {
       source: {
-        type: row.sourceType as ImportSourceType,
+        type: row.sourceType,
         label: row.sourceProvider,
         ...(row.sourceExternalId ? { externalId: row.sourceExternalId } : {}),
         ...(row.sourceUrl ? { url: row.sourceUrl } : {}),

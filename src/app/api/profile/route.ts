@@ -3,7 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { todayForUser } from "@/lib/calendarDate";
 import { prisma } from "@/lib/db";
 import { hasStoredEditableDays } from "@/lib/generateMealPlan";
-import { hasPlanRelevantChange } from "@/lib/planRelevantProfile";
+import { PLAN_RELEVANT_PROFILE_SELECT, hasPlanRelevantChange, toPlanRelevantProfile } from "@/lib/planRelevantProfile";
 import { getApiUserId } from "@/lib/session";
 import { profilePayloadSchema } from "@/lib/validation/profile";
 import { firstZodIssue } from "@/lib/validation/zodError";
@@ -35,39 +35,6 @@ const CLIENT_PROFILE_SELECT = {
   priorities: { select: { label: true } },
   trainingSessions: { select: { weekday: true, startTime: true, durationMin: true, sportType: true, intensity: true } },
 } satisfies Prisma.ProfileSelect;
-
-/** Die gespeicherten Werte, die der Tagesplaner liest (siehe planRelevantProfile.ts) - Vergleichsbasis vor dem Speichern. */
-const PLAN_RELEVANT_SELECT = {
-  id: true,
-  age: true,
-  sex: true,
-  heightCm: true,
-  weightKg: true,
-  activityLevel: true,
-  goal: true,
-  goalRateKgPerWeek: true,
-  sportType: true,
-  dietType: true,
-  likedFoods: { select: { label: true } },
-  dislikedFoods: { select: { label: true } },
-  allergies: { select: { label: true } },
-  trainingSessions: { select: { weekday: true, startTime: true, durationMin: true, sportType: true } },
-} satisfies Prisma.ProfileSelect;
-
-type StoredPlanRelevantProfile = Prisma.ProfileGetPayload<{ select: typeof PLAN_RELEVANT_SELECT }>;
-
-function labelsOf(tags: { label: string }[]): string[] {
-  return tags.map((tag) => tag.label);
-}
-
-function planRelevantValues(stored: StoredPlanRelevantProfile) {
-  return {
-    ...stored,
-    likedFoods: labelsOf(stored.likedFoods),
-    dislikedFoods: labelsOf(stored.dislikedFoods),
-    allergies: labelsOf(stored.allergies),
-  };
-}
 
 export async function GET() {
   const userId = await getApiUserId();
@@ -113,7 +80,8 @@ export async function POST(request: Request) {
   // Eine Transaktion: Tags (auch Allergien) werden gelöscht und neu angelegt - schlägt ein Schritt
   // fehl, darf das Profil nicht ohne Allergien oder mit halb übernommenen Werten zurückbleiben.
   const { profileId, planRelevantChange } = await prisma.$transaction(async (tx) => {
-    const existing = await tx.profile.findUnique({ where: { userId }, select: PLAN_RELEVANT_SELECT });
+    // Vorher-Stand in der Sicht des Planers - dieselbe Auswahl, über die der Planer das Profil liest.
+    const existing = await tx.profile.findUnique({ where: { userId }, select: PLAN_RELEVANT_PROFILE_SELECT });
     const id = existing ? existing.id : (await tx.profile.create({ data: { ...scalarData, userId } })).id;
 
     if (existing) {
@@ -138,7 +106,7 @@ export async function POST(request: Request) {
         trainingSessions: { create: body.trainingSessions },
       },
     });
-    return { profileId: id, planRelevantChange: existing !== null && hasPlanRelevantChange(planRelevantValues(existing), body) };
+    return { profileId: id, planRelevantChange: existing !== null && hasPlanRelevantChange(toPlanRelevantProfile(existing), body) };
   });
 
   // Die Pläne bleiben hier immer unverändert. `planAdaptation.needed` sagt dem Client nur, dass er fragen

@@ -9,6 +9,7 @@ import { Input, Select } from "@/components/ui/Field";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { deleteBudget, deleteExpense } from "./budgetRequests";
 
 export interface BudgetSummaryView {
   budgetId: string;
@@ -412,9 +413,15 @@ export default function BudgetClient({
     }
   }
 
+  // Löschen übernimmt die Anzeige erst nach Bestätigung des Servers (R5F-3).
   async function handleDeleteBudget(budgetId: string) {
+    setError(null);
+    const result = await deleteBudget(budgetId);
+    if (!result.ok) {
+      setError(result.message);
+      return;
+    }
     setSummary((prev) => prev.filter((s) => s.budgetId !== budgetId));
-    await fetch(`/api/budget/${budgetId}`, { method: "DELETE" }).catch(() => {});
   }
 
   function expenseToPayload(form: ExpenseFormState) {
@@ -470,8 +477,13 @@ export default function BudgetClient({
   }
 
   async function handleDeleteExpense(id: string) {
+    setError(null);
+    const result = await deleteExpense(id);
+    if (!result.ok) {
+      setError(result.message);
+      return;
+    }
     setExpenses((prev) => prev.filter((e) => e.id !== id));
-    await fetch(`/api/budget/expenses/${id}`, { method: "DELETE" }).catch(() => {});
     await refreshSummary();
   }
 

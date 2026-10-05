@@ -26,6 +26,7 @@ const { recipeAsPlanned } = await import("@/lib/recipeAsPlanned");
 const { generateAndSaveMealPlan } = await import("@/lib/mealPlanner/generate");
 const { createMealPlan, getMealPlan } = await import("@/lib/mealPlanner/mealPlanService");
 const { removeMember } = await import("@/lib/household/householdService");
+const { getWeeklyShoppingForProfile } = await import("@/lib/shopping/weeklyShoppingService");
 const { createPerson, createRecipe, createHousehold, planInDayPlan, planInHouseholdPlan, clearFixtureData } = databaseFixtures(prisma);
 
 /** Donnerstag: gestern ist historisch, heute bearbeitbar. */
@@ -200,7 +201,7 @@ describe("Haushaltsplan: ehemalige Mitglieder (R5E-5)", () => {
     const secondMember = await prisma.householdMember.create({ data: { householdId: household.id, userId: second.user.id, role: "MEMBER" } });
     const ownerMember = await prisma.householdMember.findUniqueOrThrow({ where: { userId: owner.user.id } });
     const recipe = await createRecipe("Reis-Bowl");
-    const plan = await createMealPlan(household.id, {
+    const { plan } = await createMealPlan(household.id, {
       startDate: YESTERDAY,
       endDate: YESTERDAY,
       householdMemberIds: [ownerMember.id, secondMember.id],
@@ -231,5 +232,24 @@ describe("Haushaltsplan: ehemalige Mitglieder (R5E-5)", () => {
     const after = await getMealPlan(household.id, plan.id);
     expect(after!.members).toHaveLength(2);
     expect(after!.members.filter((m) => m.householdMemberId === null)).toHaveLength(1);
+  });
+});
+
+describe("Einkaufsliste und historische Tage (R5F-6)", () => {
+  it("ein vergangener Tag erzeugt keinen Einkaufsbedarf und bleibt samt Einträgen und Snapshot unverändert gespeichert", async () => {
+    const { profile } = await createPerson("A");
+    await createRecipe("Reis-Bowl"); // Zutat "150 g Reis"
+    await getOrGenerateDayPlan(profile.id, YESTERDAY, YESTERDAY);
+    await getOrGenerateDayPlan(profile.id, TODAY, TODAY);
+    const yesterdayBefore = await storedItems(profile.id, YESTERDAY);
+    const [todayItem] = await storedItems(profile.id, TODAY);
+
+    const shopping = await getWeeklyShoppingForProfile(profile.id, TODAY, NOW);
+
+    expect(shopping.plannedDays).toBe(2);
+    expect(shopping.items).toEqual([
+      expect.objectContaining({ ingredientName: "Reis", requiredQuantity: Math.round(150 * todayItem.portionMultiplier * 100) / 100 }),
+    ]);
+    expect(await storedItems(profile.id, YESTERDAY)).toEqual(yesterdayBefore);
   });
 });

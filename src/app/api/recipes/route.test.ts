@@ -23,7 +23,7 @@ const session = vi.hoisted(() => ({ userId: null as string | null }));
 vi.mock("@/lib/session", () => ({ getApiUserId: async () => session.userId }));
 
 const { prisma } = await import("@/lib/db");
-const { DELETE, POST } = await import("./route");
+const { DELETE, GET, POST } = await import("./route");
 const { createPerson, createRecipe, createHousehold, planInDayPlan, planInHouseholdPlan, clearFixtureData } = databaseFixtures(prisma);
 
 const RECIPE_IN_USE_MESSAGE = "Das Rezept kann nicht gelöscht werden, weil es noch in einem Essens- oder Wochenplan verwendet wird.";
@@ -152,5 +152,74 @@ describe("DELETE /api/recipes (F-09)", () => {
 
     await expect(DELETE(deleteRequest(recipe.id))).rejects.toBe(failure);
     expect(await prisma.recipe.count({ where: { id: recipe.id } })).toBe(1);
+  });
+});
+
+describe("GET /api/recipes: Anmeldung und eigene Rezepte (R5F-12)", () => {
+  it("ohne Anmeldung 401 statt einer leeren Erfolgsliste", async () => {
+    await createRecipe("Eigene Bowl", (await createPerson("A")).profile.id);
+
+    const res = await GET();
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Nicht angemeldet." });
+  });
+
+  it("liefert genau die eigenen Rezepte, neueste zuerst - keine Katalogrezepte und keine fremden privaten", async () => {
+    const other = await createPerson("B");
+    await createRecipe("Fremdes Geheimrezept", other.profile.id);
+    await createRecipe("Katalog-Bowl");
+    const { profile } = await signedInPerson();
+    const older = await createRecipe("Ältere eigene Bowl", profile.id);
+    await prisma.recipe.update({ where: { id: older.id }, data: { createdAt: new Date("2026-01-01T00:00:00Z") } });
+    const newer = await createRecipe("Neuere eigene Bowl", profile.id);
+
+    const res = await GET();
+
+    expect(res.status).toBe(200);
+    const { recipes } = await res.json();
+    expect(recipes.map((r: { id: string }) => r.id)).toEqual([newer.id, older.id]);
+    expect(recipes.every((r: { ownerProfileId: string; isCustom: boolean }) => r.ownerProfileId === profile.id && r.isCustom)).toBe(true);
+  });
+
+  it("angemeldet ohne Profil: wie bisher 200 mit leerer Liste", async () => {
+    const user = await prisma.user.create({ data: { name: "Ohne Profil" } });
+    session.userId = user.id;
+
+    const res = await GET();
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ recipes: [] });
+  });
+});
+
+describe("POST/DELETE /api/recipes: Profil aus der Session (R5F-12)", () => {
+  it("ohne Profil 404 'Kein Profil vorhanden.', ohne Anmeldung 401 - nichts wird angelegt oder gelöscht", async () => {
+    const other = await createPerson("B");
+    const foreign = await createRecipe("Fremdes Rezept", other.profile.id);
+    expect((await POST(createRequest())).status).toBe(401);
+
+    const user = await prisma.user.create({ data: { name: "Ohne Profil" } });
+    session.userId = user.id;
+    const created = await POST(createRequest());
+    const deleted = await DELETE(deleteRequest(foreign.id));
+
+    expect(created.status).toBe(404);
+    expect(await created.json()).toEqual({ error: "Kein Profil vorhanden." });
+    expect(deleted.status).toBe(404);
+    expect(await prisma.recipe.count({ where: { name: "Linsen-Curry" } })).toBe(0);
+    expect(await prisma.recipe.findUnique({ where: { id: foreign.id } })).not.toBeNull();
+  });
+
+  it("ein fremdes eigenes Rezept lässt sich nicht löschen; das neue Rezept gehört dem angemeldeten Profil", async () => {
+    const other = await createPerson("B");
+    const foreign = await createRecipe("Fremdes Rezept", other.profile.id);
+    const { profile } = await signedInPerson();
+
+    expect((await DELETE(deleteRequest(foreign.id))).status).toBe(200);
+    expect(await prisma.recipe.findUnique({ where: { id: foreign.id } })).not.toBeNull();
+
+    const { recipe } = await (await POST(createRequest())).json();
+    expect(recipe).toMatchObject({ ownerProfileId: profile.id, isCustom: true });
   });
 });

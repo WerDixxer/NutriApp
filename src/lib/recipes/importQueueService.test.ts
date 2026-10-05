@@ -651,6 +651,41 @@ describe("Mock-Quellen in Produktion", () => {
   });
 });
 
+describe("Gespeicherte Quelle wird geprüft gelesen (L-2)", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  async function withStoredSource(sourceType: string) {
+    const id = await approvedCandidate();
+    await prisma.recipeImportCandidate.update({ where: { id }, data: { sourceType } });
+    return id;
+  }
+
+  it("eine gültige Quelle kommt unverändert zurück", async () => {
+    const id = await approvedCandidate();
+    expect((await service.getImportCandidateDetail(id))?.stored.candidate.source.type).toBe("mock");
+  });
+
+  it.each(["Mock", "MOCK", " mock", "unbekannt", ""])("eine unbekannte gespeicherte Quelle (%j) wird nicht ungeprüft übernommen", async (sourceType) => {
+    const id = await withStoredSource(sourceType);
+
+    await expect(service.getImportCandidateDetail(id)).rejects.toThrow(`RecipeImportCandidate ${id}: unbekannte Quelle "${sourceType}".`);
+  });
+
+  it("in Produktion wird ein Mock-Kandidat mit abweichender Schreibweise nicht veröffentlicht, nichts wird geschrieben", async () => {
+    const id = await withStoredSource("MOCK");
+    const before = await candidateRow(id);
+    const eventsBefore = await eventActions(id);
+
+    vi.stubEnv("NODE_ENV", "production");
+    const context = await service.loadImportReviewContext();
+    await expect(service.publishCandidate(id, reviewer, context)).rejects.toThrow("unbekannte Quelle");
+
+    expect(await externalRecipeCount()).toBe(0);
+    expect(await candidateRow(id)).toEqual(before);
+    expect(await eventActions(id)).toEqual(eventsBefore);
+  });
+});
+
 describe("Audit Trail", () => {
   it("dokumentiert den vollständigen Weg bis zum Publish mit Status, Reviewer und Recipe-ID - ohne E-Mail", async () => {
     const id = await approvedCandidate();
