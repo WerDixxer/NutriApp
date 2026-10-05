@@ -1,6 +1,7 @@
-import { addDays, calendarDateParts, type CalendarDate } from "./calendarDate";
+import { addDays, calendarDateParts, daysBetween, parseCalendarDate, startOfWeek, type CalendarDate } from "./calendarDate";
 import { SLOT_LABELS, WEEKDAY_LABELS } from "./labels";
 import type { DbRecipeLike } from "./recipeDetail";
+import { isHistoricalPlanDay } from "./planDayBoundary";
 import { recipeAsPlanned, type PlannableRecipe, type StoredRecipeSnapshot } from "./recipeAsPlanned";
 
 /**
@@ -64,6 +65,8 @@ export interface LedgerDay {
   dayOfMonth: number;
   dateLabel: string;
   isToday: boolean;
+  /** Vor heute (planDayBoundary.ts): Historie, ein fehlender Plan wird nie nachträglich erzeugt. */
+  isHistorical: boolean;
   hasTraining: boolean;
   kcalTotal: number;
   /** Rezeptnamen der Hauptmahlzeiten (bei Tagen ohne Hauptmahlzeit die ersten Mahlzeiten), kommagetrennt. */
@@ -164,6 +167,7 @@ export function buildWeekLedger({
       dayOfMonth: day,
       dateLabel: `${day}. ${MONTH_LABELS[month - 1]}`,
       isToday: date === today,
+      isHistorical: isHistoricalPlanDay(date, today),
       hasTraining: plan.items.some((item) => TRAINING_SLOTS.has(item.slot)),
       kcalTotal,
       headline,
@@ -180,6 +184,22 @@ export function buildWeekLedger({
     days,
     initialOpenKey: todayDay && todayDay.meals.length > 0 ? todayDay.key : null,
   };
+}
+
+/**
+ * Die Woche, die /plan zeigt (R5E): `?week=JJJJ-MM-TT` ist ein beliebiger Tag der gewünschten Woche.
+ * Fehlt der Wert, ist er ungültig oder liegt die Woche nach der laufenden, gilt die laufende Woche -
+ * /plan navigiert nur zurück, ein Seitenaufruf erzeugt so nie künftige Wochen.
+ */
+export function resolveLedgerWeek(
+  weekParam: string | string[] | undefined,
+  today: CalendarDate,
+): { weekStart: CalendarDate; isCurrentWeek: boolean } {
+  const currentWeekStart = startOfWeek(today);
+  const requested = typeof weekParam === "string" ? parseCalendarDate(weekParam) : null;
+  const requestedWeekStart = requested ? startOfWeek(requested) : currentWeekStart;
+  if (daysBetween(currentWeekStart, requestedWeekStart) >= 0) return { weekStart: currentWeekStart, isCurrentWeek: true };
+  return { weekStart: requestedWeekStart, isCurrentWeek: false };
 }
 
 /** Es ist immer höchstens ein Tag offen: ein anderer Tag ersetzt den offenen, derselbe Tag schließt ihn. */

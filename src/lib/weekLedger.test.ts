@@ -6,6 +6,7 @@ import {
   collectPlanRecipes,
   formatPortionLabel,
   formatWeekRange,
+  resolveLedgerWeek,
   shortRecipeName,
   toggleOpenDay,
   type LedgerPlanItem,
@@ -329,5 +330,69 @@ describe("buildWeekLedger: Rezept-Snapshot (R5E)", () => {
 
     expect(days[0].meals[0]).toMatchObject({ name: "Udon-Salat (neu)", kcal: 930 });
     expect(days[0].meals[0].plannedRecipe).toEqual({ name: "Udon-Salat (neu)", kcal: 620, proteinG: 20, carbsG: 40, fatG: 10 });
+  });
+});
+
+describe("resolveLedgerWeek: welche Woche /plan zeigt (H-2)", () => {
+  /** Donnerstag, 01.10.2026: laufende Woche ab Montag, 28.09. */
+  const THURSDAY: CalendarDate = "2026-10-01";
+  const CURRENT = { weekStart: "2026-09-28", isCurrentWeek: true };
+
+  it.each([
+    ["ohne Parameter", undefined],
+    ["leerer Wert", ""],
+    ["ungültiges Datum", "2026-02-30"],
+    ["kein Datum", "letzte-woche"],
+    ["Zeitpunkt statt Kalendertag", "2026-09-20T10:00:00Z"],
+    ["mehrfacher Parameter", ["2026-09-16", "2026-09-09"]],
+  ] as const)("%s → laufende Woche", (_label, param) => {
+    expect(resolveLedgerWeek(param as string | string[] | undefined, THURSDAY)).toEqual(CURRENT);
+  });
+
+  it.each([
+    ["Montag", "2026-09-21"],
+    ["Mittwoch", "2026-09-23"],
+    ["Sonntag", "2026-09-27"],
+  ] as const)("ein Tag einer vergangenen Woche (%s) → Montag dieser Woche", (_label, param) => {
+    expect(resolveLedgerWeek(param, THURSDAY)).toEqual({ weekStart: "2026-09-21", isCurrentWeek: false });
+  });
+
+  it.each([
+    ["ein Tag der laufenden Woche", "2026-10-03"],
+    ["heute", THURSDAY],
+    ["die nächste Woche", "2026-10-05"],
+    ["weit in der Zukunft", "2099-01-01"],
+  ] as const)("%s → laufende Woche (keine Navigation in die Zukunft)", (_label, param) => {
+    expect(resolveLedgerWeek(param, THURSDAY)).toEqual(CURRENT);
+  });
+
+  it.each([
+    ["Monatswechsel", "2026-09-01", "2026-08-31"],
+    ["Jahreswechsel", "2026-01-01", "2025-12-29"],
+    ["Schalttag", "2024-02-29", "2024-02-26"],
+  ] as const)("über den %s: %s gehört zur Woche ab %s", (_label, param, monday) => {
+    expect(resolveLedgerWeek(param, THURSDAY)).toEqual({ weekStart: monday, isCurrentWeek: false });
+  });
+
+  it("richtet sich nach dem Kalendertag in Berlin: Montag 00:30 Uhr ist schon die neue Woche", () => {
+    // In UTC ist es noch Sonntag, 27.09., 22:30 - nach UTC wäre die Woche ab 21.09. noch die laufende.
+    const today = todayForUser(new Date("2026-09-28T00:30:00+02:00"));
+
+    expect(resolveLedgerWeek(undefined, today)).toEqual({ weekStart: "2026-09-28", isCurrentWeek: true });
+    expect(resolveLedgerWeek("2026-09-21", today)).toEqual({ weekStart: "2026-09-21", isCurrentWeek: false });
+  });
+});
+
+describe("buildWeekLedger: vergangene Tage (H-2)", () => {
+  it("markiert Tage vor heute als historisch, heute und später nicht", () => {
+    const ledger = buildWeekLedger({ weekStart: MONDAY, plans: week(), today: FRIDAY });
+    expect(ledger.days.map((d) => d.isHistorical)).toEqual([true, true, true, true, false, false, false]);
+  });
+
+  it("in einer vergangenen Woche ist jeder Tag historisch und keiner standardmäßig geöffnet", () => {
+    const ledger = buildWeekLedger({ weekStart: MONDAY, plans: week({ 2: [] }), today: "2026-10-01" });
+    expect(ledger.days.every((d) => d.isHistorical && !d.isToday)).toBe(true);
+    expect(ledger.days[2].meals).toEqual([]);
+    expect(ledger.initialOpenKey).toBeNull();
   });
 });

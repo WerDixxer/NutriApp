@@ -77,7 +77,9 @@ function DayRow({
         <h2>
           <DayMark day={day} />
         </h2>
-        <p className="pt-1 text-[13.5px] leading-snug text-ink-soft">Für diesen Tag ist noch kein Plan vorhanden.</p>
+        <p className="pt-1 text-[13.5px] leading-snug text-ink-soft">
+          {day.isHistorical ? "Für diesen Tag ist kein Plan gespeichert." : "Für diesen Tag ist noch kein Plan vorhanden."}
+        </p>
       </li>
     );
   }
@@ -147,11 +149,14 @@ export default function WeeklyPlanLedger({
   recipes,
   initialOpenKey,
   insightsByDay,
+  historicalWeek = false,
 }: {
   days: LedgerDay[];
   recipes: Record<string, PlanRecipe>;
   initialOpenKey: string | null;
   insightsByDay: Record<string, InsightView[]>;
+  /** Eine vergangene Woche: wird als Rückblick gekennzeichnet. */
+  historicalWeek?: boolean;
 }) {
   const [openKey, setOpenKey] = useState<string | null>(initialOpenKey);
   const [selected, setSelected] = useState<Pick<LedgerMeal, "recipeId" | "portionMultiplier" | "plannedRecipe"> | null>(null);
@@ -174,6 +179,11 @@ export default function WeeklyPlanLedger({
 
   return (
     <>
+      {historicalWeek && (
+        <p className="mt-6 text-[13.5px] leading-snug text-ink-soft">
+          Rückblick: So war diese Woche geplant. Vergangene Pläne bleiben unverändert.
+        </p>
+      )}
       <ol className="mt-8 divide-y divide-border border-y border-border" aria-label="Wochenplan">
         {days.map((day) => (
           <DayRow
